@@ -4,6 +4,7 @@
 //
 //  HealthKit 数据管理器（单例）。
 //  与苹果健康保持一致的睡眠查询：按「睡眠日」18:00–18:00 归属。
+//  isLoading 只在首次加载时使用，切 tab 回来时静默刷新。
 //
 
 import HealthKit
@@ -16,8 +17,8 @@ enum SleepDay {
     static func window(for date: Date) -> (start: Date, end: Date) {
         let calendar = Calendar.current
         let dayStart = calendar.startOfDay(for: date)
-        let start = calendar.date(byAdding: .hour, value: -6, to: dayStart)!   // 前一天 18:00
-        let end   = calendar.date(byAdding: .hour, value: 18, to: dayStart)!   // 当天 18:00
+        let start = calendar.date(byAdding: .hour, value: -6, to: dayStart)!
+        let end   = calendar.date(byAdding: .hour, value: 18, to: dayStart)!
         return (start, end)
     }
 
@@ -46,6 +47,9 @@ final class HealthManager {
     var isLoading = false
     var authorizationStatus: HKAuthorizationStatus = .notDetermined
 
+    /// 是否已经完成过一次完整加载（授权 + 三类数据）
+    private var hasLoadedOnce = false
+
     private init() {}
 
     // MARK: - 生命体征数据结构
@@ -63,6 +67,17 @@ final class HealthManager {
         guard HKHealthStore.isHealthDataAvailable() else {
             AppLogWarn("HealthKit 在此设备上不可用")
             return
+        }
+
+        // 只有首次进入才显示全屏 loading；切 tab 回来时静默刷新
+        let isFirstLoad = !hasLoadedOnce
+        if isFirstLoad { isLoading = true }
+
+        defer {
+            if isFirstLoad {
+                isLoading = false
+                hasLoadedOnce = true
+            }
         }
 
         var typesToRead: Set<HKObjectType> = [
@@ -99,9 +114,6 @@ final class HealthManager {
     // MARK: - 活动摘要
 
     func fetchTodayActivitySummary() async {
-        isLoading = true
-        defer { isLoading = false }
-
         var today = Calendar.current.dateComponents([.year, .month, .day], from: Date())
         today.calendar = Calendar.current
 
@@ -118,10 +130,15 @@ final class HealthManager {
                 }
                 healthStore.execute(query)
             }
-            activitySummary = summaries.first
+            // 只在值真的发生变化时才更新，避免不必要的重绘
+            if activitySummary?.activeEnergyBurned != summaries.first?.activeEnergyBurned
+                || activitySummary?.appleExerciseTime != summaries.first?.appleExerciseTime
+                || activitySummary?.appleStandHours != summaries.first?.appleStandHours {
+                activitySummary = summaries.first
+            }
         } catch {
             AppLogError("查询活动摘要失败: \(error)")
-            activitySummary = nil
+            if activitySummary == nil { activitySummary = nil }
         }
     }
 
@@ -131,8 +148,12 @@ final class HealthManager {
     func fetchTodaySleepData() async {
         let (start, end) = SleepDay.window(for: Date())
         let raw = await fetchSleepSamples(from: start, to: end)
-        // 只保留「开始时间」落在睡眠日窗口内的样本
-        sleepSamples = raw.filter { $0.startDate >= start && $0.startDate < end }
+        let fetched = raw.filter { $0.startDate >= start && $0.startDate < end }
+
+        // 只在内容不同时才赋值，避免触发无谓的视图重建
+        if !sameSamples(sleepSamples, fetched) {
+            sleepSamples = fetched
+        }
     }
 
     /// 通用查询：取指定时间范围内所有睡眠样本（保留 asleep* 与 awake，排除 inBed）
@@ -148,13 +169,23 @@ final class HealthManager {
         do {
             let allSamples = try await descriptor.result(for: healthStore)
             return allSamples.filter { sample in
-                // 排除「在床上」；保留所有睡眠阶段（含 asleepUnspecified）与 awake
                 sample.value != HKCategoryValueSleepAnalysis.inBed.rawValue
             }
         } catch {
             AppLogError("查询睡眠数据失败: \(error)")
             return []
         }
+    }
+
+    /// 判断两组睡眠样本是否等价（数量 + 起止时间 + 阶段）
+    private func sameSamples(_ a: [HKCategorySample], _ b: [HKCategorySample]) -> Bool {
+        guard a.count == b.count else { return false }
+        for (x, y) in zip(a, b) {
+            if x.startDate != y.startDate || x.endDate != y.endDate || x.value != y.value {
+                return false
+            }
+        }
+        return true
     }
 
     // MARK: - 生命体征

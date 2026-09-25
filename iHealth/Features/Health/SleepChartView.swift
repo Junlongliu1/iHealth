@@ -13,6 +13,21 @@ import SwiftUI
 import Charts
 import HealthKit
 
+// MARK: - 条件化 chartXSelection
+
+private extension View {
+    /// 仅在 condition 为 true 时安装 chartXSelection；
+    /// 为 false 时完全不安装手势，避免拦截触摸事件。
+    @ViewBuilder
+    func applyChartXSelection(_ condition: Bool, value: Binding<Date?>) -> some View {
+        if condition {
+            self.chartXSelection(value: value)
+        } else {
+            self
+        }
+    }
+}
+
 struct SleepChartView: View {
     let samples: [HKCategorySample]
 
@@ -20,7 +35,6 @@ struct SleepChartView: View {
     /// 详情页用 true（默认），首页正方形卡片用 false（简洁模式）。
     var showsAxes: Bool = true
 
-    /// 当前手指选中的时间点
     @State private var selectedDate: Date?
 
     private enum SleepStage: Int, Comparable, CaseIterable {
@@ -44,7 +58,6 @@ struct SleepChartView: View {
             }
         }
 
-        /// 绘制时的 Y 数值：深睡最低，清醒最高
         var plotIndex: Double {
             switch self {
             case .deep:  return 0
@@ -69,7 +82,6 @@ struct SleepChartView: View {
         }
     }
 
-    /// Y 轴从下到上的阶段顺序（深睡 → 清醒）
     private static let axisStages: [SleepStage] = [.deep, .core, .rem, .awake]
 
     private struct SleepEntry: Identifiable {
@@ -86,13 +98,11 @@ struct SleepChartView: View {
         }
     }
 
-    /// 当前选中的段
     private var selectedEntry: SleepEntry? {
         guard showsAxes, let date = selectedDate else { return nil }
         return entries.first { date >= $0.start && date < $0.end }
     }
 
-    /// X 轴范围：实际睡眠时间段前后各留 10 分钟
     private var xDomain: ClosedRange<Date> {
         guard let minDate = entries.map(\.start).min(),
               let maxDate = entries.map(\.end).max(),
@@ -117,7 +127,6 @@ struct SleepChartView: View {
                 .cornerRadius(0)
             }
 
-            // 选中位置的竖线
             if let date = selectedDate, showsAxes {
                 RuleMark(x: .value("选中", date))
                     .foregroundStyle(Color.primary.opacity(0.55))
@@ -164,7 +173,8 @@ struct SleepChartView: View {
             }
         }
         .chartLegend(.hidden)
-        .chartXSelection(value: showsAxes ? $selectedDate : .constant(nil))
+        // ★ 关键：只在 showsAxes 时安装 chartXSelection，避免首页卡片拦截触摸
+        .applyChartXSelection(showsAxes, value: $selectedDate)
         .chartPlotStyle { plot in
             plot.padding(.vertical, showsAxes ? 4 : 0)
         }
@@ -177,8 +187,6 @@ struct SleepChartView: View {
         }
         .animation(.smooth(duration: 0.18), value: selectedEntry?.id)
     }
-
-    // MARK: - 选中信息浮层
 
     private func selectionInfo(_ entry: SleepEntry) -> some View {
         HStack(spacing: 5) {
@@ -208,15 +216,9 @@ struct SleepChartView: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 5)
-        .background(
-            Capsule().fill(.regularMaterial)
-        )
-        .overlay(
-            Capsule().stroke(Color.primary.opacity(0.08), lineWidth: 1)
-        )
+        .background(Capsule().fill(.regularMaterial))
+        .overlay(Capsule().stroke(Color.primary.opacity(0.08), lineWidth: 1))
     }
-
-    // MARK: - 格式化
 
     private func timeText(_ date: Date) -> String {
         date.formatted(.dateTime.hour(.twoDigits(amPM: .omitted)).minute(.twoDigits))

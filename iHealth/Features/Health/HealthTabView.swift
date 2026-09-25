@@ -3,7 +3,6 @@
 //  iHealth
 //
 //  健康标签页主视图。
-//  展示活动圆环卡片（全宽）和睡眠、生命体征两个正方形卡片。
 //  仅适配 iOS 26+。
 //
 
@@ -109,11 +108,15 @@ struct HealthTabView: View {
 
                     SleepChartView(samples: healthManager.sleepSamples, showsAxes: false)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        // ★ 关键：让图表区域不拦截触摸，点击穿透到 NavigationLink
+                        .allowsHitTesting(false)
                 }
             }
             .padding(14)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .aspectRatio(1, contentMode: .fit)
+            // ★ 保证整张卡片（含 padding）都是可点击区域
+            .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             .background(cardBackground)
             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             .overlay(
