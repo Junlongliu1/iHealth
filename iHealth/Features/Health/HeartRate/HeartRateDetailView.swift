@@ -131,8 +131,17 @@ struct HeartRateDetailView: View {
                 }
 
                 if hasAny {
-                    HeartRateHourlyChart(data: hourly, selection: $selectedHour)
-                        .frame(height: 140)
+                    HourlyLineChart(
+                        data: hourly,
+                        hour: { $0.hour },
+                        value: { $0.bpm },
+                        color: .red,
+                        valueFormatter: { "\(Int($0.rounded())) 次/分" },
+                        fallbackYRange: 50...100,
+                        yPaddingRatio: 0.2,
+                        selection: $selectedHour
+                    )
+                    .frame(height: 140)
                 } else {
                     emptyChart.frame(height: 140)
                 }
@@ -206,9 +215,15 @@ struct HeartRateDetailView: View {
                         .foregroundStyle(.tertiary)
                 }
 
-                HeartRateTrendChart(
+                TrendLineChart(
                     data: daily,
+                    date: { $0.date },
+                    value: { $0.bpm },
+                    color: .red,
                     range: range,
+                    valueFormatter: { "\(Int($0.rounded())) 次/分" },
+                    fallbackYRange: 50...100,
+                    yPaddingRatio: 0.25,
                     selection: $selectedTrendDay
                 )
                 .frame(height: 140)
@@ -232,7 +247,7 @@ struct HeartRateDetailView: View {
         .frame(maxWidth: .infinity)
     }
 
-    // MARK: - 切换（统一走 MetricNavigation）
+    // MARK: - 切换
 
     private func shift(by offset: Int) {
         guard let anchor = MetricNavigation.shift(
@@ -296,266 +311,6 @@ struct HeartRateDetailView: View {
         let values = data.compactMap { $0.bpm }
         guard !values.isEmpty else { return nil }
         return values.reduce(0, +) / Double(values.count)
-    }
-}
-
-// MARK: - 每小时心率曲线
-
-private struct HeartRateHourlyChart: View {
-    let data: [HourlyHeartRate]
-    @Binding var selection: Int?
-
-    private var selectedItem: HourlyHeartRate? {
-        guard let selection else { return nil }
-        return data.first { $0.hour == selection }
-    }
-
-    var body: some View {
-        Chart {
-            ForEach(data) { item in
-                if let bpm = item.bpm {
-                    AreaMark(
-                        x: .value("小时", item.hour),
-                        yStart: .value("底", yDomain.lowerBound),
-                        yEnd: .value("心率", bpm)
-                    )
-                    .foregroundStyle(
-                        LinearGradient(
-                            colors: [Color.red.opacity(0.28), Color.red.opacity(0.02)],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        )
-                    )
-                    .interpolationMethod(.catmullRom)
-
-                    LineMark(
-                        x: .value("小时", item.hour),
-                        y: .value("心率", bpm)
-                    )
-                    .foregroundStyle(Color.red)
-                    .interpolationMethod(.catmullRom)
-                    .lineStyle(StrokeStyle(lineWidth: 2, lineCap: .round))
-                }
-            }
-        }
-        .chartXScale(domain: 0...max(1, data.last?.hour ?? 23))
-        .chartYScale(domain: yDomain)
-        .chartXAxis {
-            AxisMarks(values: MetricHourAxis.ticks(upTo: data.last?.hour ?? 23)) { value in
-                AxisValueLabel {
-                    if let hour = value.as(Int.self) {
-                        Text(MetricHourAxis.label(for: hour))
-                            .font(.system(size: 9))
-                            .foregroundStyle(.secondary)
-                    }
-                }
-            }
-        }
-        .chartYAxis {
-            AxisMarks(position: .trailing, values: .automatic(desiredCount: 3)) { value in
-                AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5, dash: [2, 3]))
-                    .foregroundStyle(Color.primary.opacity(0.08))
-                AxisValueLabel {
-                    if let v = value.as(Double.self) {
-                        Text("\(Int(v))")
-                            .font(.system(size: 9))
-                            .foregroundStyle(.tertiary)
-                    }
-                }
-            }
-        }
-        .chartLegend(.hidden)
-        .chartOverlay { proxy in
-            Rectangle()
-                .fill(.clear)
-                .contentShape(Rectangle())
-                .highPriorityGesture(
-                    DragGesture(minimumDistance: 0)
-                        .onChanged { value in
-                            guard let raw = proxy.value(atX: value.location.x, as: Double.self) else { return }
-                            let hour = Int(raw.rounded())
-                            let maxHour = data.last?.hour ?? 23
-                            guard (0...maxHour).contains(hour) else { return }
-                            if selection != hour { selection = hour }
-                        }
-                        .onEnded { _ in
-                            withAnimation(.smooth(duration: 0.15)) { selection = nil }
-                        }
-                )
-        }
-        .overlay(alignment: .top) {
-            if let item = selectedItem {
-                MetricBubble {
-                    HStack(spacing: 5) {
-                        Text("\(String(format: "%02d", item.hour)):00")
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(.primary)
-                            .monospacedDigit()
-
-                        Text("·")
-                            .foregroundStyle(.tertiary)
-
-                        Text(item.bpm.map { "\(Int($0.rounded())) 次/分" } ?? "无数据")
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(.secondary)
-                            .monospacedDigit()
-                    }
-                }
-                .padding(.top, 2)
-                .transition(.opacity.combined(with: .scale(scale: 0.95)))
-            }
-        }
-        .animation(.smooth(duration: 0.15), value: selectedItem?.id)
-    }
-
-    private var yDomain: ClosedRange<Double> {
-        let values = data.compactMap { $0.bpm }
-        guard let lo = values.min(), let hi = values.max(), lo < hi else {
-            return 50...100
-        }
-        let pad = max((hi - lo) * 0.2, 3)
-        return (lo - pad)...(hi + pad)
-    }
-}
-
-// MARK: - 每日心率趋势图（折线 + 面积，含平均参考线）
-
-private struct HeartRateTrendChart: View {
-    let data: [DailyHeartRate]
-    let range: MetricRange
-    @Binding var selection: Date?
-
-    private var validValues: [Double] { data.compactMap { $0.bpm } }
-
-    private var selectedItem: DailyHeartRate? {
-        guard let selection else { return nil }
-        let nearest = data.min {
-            abs($0.date.timeIntervalSince(selection)) < abs($1.date.timeIntervalSince(selection))
-        }
-        guard let nearest,
-              abs(nearest.date.timeIntervalSince(selection)) <= 12 * 3600 else { return nil }
-        return nearest
-    }
-
-    /// 参考线：整段区间的平均心率
-    private var referenceValue: Double? {
-        guard !validValues.isEmpty else { return nil }
-        return validValues.reduce(0, +) / Double(validValues.count)
-    }
-
-    var body: some View {
-        Chart {
-            if let ref = referenceValue {
-                RuleMark(y: .value("平均", ref))
-                    .foregroundStyle(Color.red.opacity(0.35))
-                    .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 3]))
-                    .zIndex(0)
-            }
-
-            ForEach(data) { item in
-                if let bpm = item.bpm {
-                    AreaMark(
-                        x: .value("日期", item.date, unit: .day),
-                        yStart: .value("底", yDomain.lowerBound),
-                        yEnd: .value("心率", bpm)
-                    )
-                    .foregroundStyle(
-                        LinearGradient(
-                            colors: [Color.red.opacity(0.28), Color.red.opacity(0.02)],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        )
-                    )
-                    .interpolationMethod(.catmullRom)
-                    .zIndex(1)
-
-                    LineMark(
-                        x: .value("日期", item.date, unit: .day),
-                        y: .value("心率", bpm)
-                    )
-                    .foregroundStyle(Color.red)
-                    .interpolationMethod(.catmullRom)
-                    .lineStyle(StrokeStyle(lineWidth: 2, lineCap: .round))
-                    .zIndex(2)
-                }
-            }
-
-            if let item = selectedItem, let bpm = item.bpm {
-                PointMark(
-                    x: .value("日期", item.date, unit: .day),
-                    y: .value("心率", bpm)
-                )
-                .foregroundStyle(Color.red)
-                .symbolSize(60)
-                .zIndex(3)
-            }
-        }
-        .chartXSelection(value: $selection)
-        .chartYScale(domain: yDomain)
-        .chartXAxis {
-            AxisMarks(values: MetricXAxis.stride(for: range)) { value in
-                AxisValueLabel {
-                    if let date = value.as(Date.self) {
-                        Text(MetricXAxis.label(for: date, range: range))
-                            .font(.system(size: 10))
-                            .foregroundStyle(.secondary)
-                    }
-                }
-            }
-        }
-        .chartYAxis {
-            AxisMarks(position: .trailing, values: .automatic(desiredCount: 3)) { value in
-                AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5, dash: [2, 3]))
-                    .foregroundStyle(Color.primary.opacity(0.08))
-                AxisValueLabel {
-                    if let v = value.as(Double.self) {
-                        Text("\(Int(v))")
-                            .font(.system(size: 9))
-                            .foregroundStyle(.tertiary)
-                    }
-                }
-            }
-        }
-        .overlay(alignment: .top) {
-            if let item = selectedItem {
-                MetricBubble {
-                    HStack(spacing: 5) {
-                        Text(shortDate(item.date))
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(.primary)
-
-                        Text("·")
-                            .foregroundStyle(.tertiary)
-
-                        Text(item.bpm.map { "\(Int($0.rounded())) 次/分" } ?? "无数据")
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(.secondary)
-                            .monospacedDigit()
-                    }
-                }
-                .padding(.top, 2)
-                .transition(.opacity.combined(with: .scale(scale: 0.95)))
-            }
-        }
-        .animation(.smooth(duration: 0.18), value: selectedItem?.id)
-    }
-
-    private func shortDate(_ date: Date) -> String {
-        let f = DateFormatter()
-        f.locale = Locale(identifier: "zh_CN")
-        f.dateFormat = "M月d日 EEE"
-        return f.string(from: date)
-    }
-
-    /// 以数据范围为基准的 Y 轴，不再从 0 起，突出波动
-    private var yDomain: ClosedRange<Double> {
-        guard let lo = validValues.min(),
-              let hi = validValues.max(),
-              lo < hi else {
-            return 50...100
-        }
-        let pad = max((hi - lo) * 0.25, 3)
-        return (lo - pad)...(hi + pad)
     }
 }
 

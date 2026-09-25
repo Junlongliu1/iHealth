@@ -110,7 +110,18 @@ struct BloodOxygenDetailView: View {
                         .font(.system(size: 11)).foregroundStyle(.tertiary)
                 }
                 if hasAny {
-                    BloodOxygenHourlyChart(data: hourly, selection: $selectedHour).frame(height: 140)
+                    HourlyLineChart(
+                        data: hourly,
+                        hour: { $0.hour },
+                        value: { $0.percent },
+                        color: .blue,
+                        valueFormatter: { "\(Int($0.rounded())) %" },
+                        fallbackYRange: 90...100,
+                        yPaddingRatio: 0.2,
+                        clampRange: 0...100,
+                        selection: $selectedHour
+                    )
+                    .frame(height: 140)
                 } else {
                     emptyChart.frame(height: 140)
                 }
@@ -158,8 +169,20 @@ struct BloodOxygenDetailView: View {
                     Text("点击查看某天")
                         .font(.system(size: 11)).foregroundStyle(.tertiary)
                 }
-                BloodOxygenTrendChart(data: daily, range: range, selection: $selectedTrendDay)
-                    .frame(height: 140)
+                TrendLineChart(
+                    data: daily,
+                    date: { $0.date },
+                    value: { $0.percent },
+                    color: .blue,
+                    range: range,
+                    valueFormatter: { "\(Int($0.rounded())) %" },
+                    fallbackYRange: 90...100,
+                    yPaddingRatio: 0.15,
+                    clampRange: 0...100,
+                    reference: .fixed(95),
+                    selection: $selectedTrendDay
+                )
+                .frame(height: 140)
             }
 
             BloodOxygenStatsGrid(daily: daily)
@@ -233,221 +256,6 @@ struct BloodOxygenDetailView: View {
         let values = data.compactMap { $0.percent }
         guard !values.isEmpty else { return nil }
         return values.reduce(0, +) / Double(values.count)
-    }
-}
-
-// MARK: - 每小时血氧曲线
-
-private struct BloodOxygenHourlyChart: View {
-    let data: [HourlyBloodOxygen]
-    @Binding var selection: Int?
-
-    private var selectedItem: HourlyBloodOxygen? {
-        guard let selection else { return nil }
-        return data.first { $0.hour == selection }
-    }
-
-    var body: some View {
-        Chart {
-            ForEach(data) { item in
-                if let p = item.percent {
-                    AreaMark(
-                        x: .value("小时", item.hour),
-                        yStart: .value("底", yDomain.lowerBound),
-                        yEnd: .value("血氧", p)
-                    )
-                    .foregroundStyle(LinearGradient(
-                        colors: [Color.blue.opacity(0.28), Color.blue.opacity(0.02)],
-                        startPoint: .top, endPoint: .bottom
-                    ))
-                    .interpolationMethod(.catmullRom)
-
-                    LineMark(x: .value("小时", item.hour), y: .value("血氧", p))
-                        .foregroundStyle(Color.blue)
-                        .interpolationMethod(.catmullRom)
-                        .lineStyle(StrokeStyle(lineWidth: 2, lineCap: .round))
-                }
-            }
-        }
-        .chartXScale(domain: 0...max(1, data.last?.hour ?? 23))
-        .chartYScale(domain: yDomain)
-        .chartXAxis {
-            AxisMarks(values: MetricHourAxis.ticks(upTo: data.last?.hour ?? 23)) { value in
-                AxisValueLabel {
-                    if let hour = value.as(Int.self) {
-                        Text(MetricHourAxis.label(for: hour))
-                            .font(.system(size: 9)).foregroundStyle(.secondary)
-                    }
-                }
-            }
-        }
-        .chartYAxis {
-            AxisMarks(position: .trailing, values: .automatic(desiredCount: 3)) { value in
-                AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5, dash: [2, 3]))
-                    .foregroundStyle(Color.primary.opacity(0.08))
-                AxisValueLabel {
-                    if let v = value.as(Double.self) {
-                        Text("\(Int(v))").font(.system(size: 9)).foregroundStyle(.tertiary)
-                    }
-                }
-            }
-        }
-        .chartLegend(.hidden)
-        .chartOverlay { proxy in
-            Rectangle().fill(.clear).contentShape(Rectangle())
-                .highPriorityGesture(
-                    DragGesture(minimumDistance: 0)
-                        .onChanged { value in
-                            guard let raw = proxy.value(atX: value.location.x, as: Double.self) else { return }
-                            let hour = Int(raw.rounded())
-                            let maxHour = data.last?.hour ?? 23
-                            guard (0...maxHour).contains(hour) else { return }
-                            if selection != hour { selection = hour }
-                        }
-                        .onEnded { _ in
-                            withAnimation(.smooth(duration: 0.15)) { selection = nil }
-                        }
-                )
-        }
-        .overlay(alignment: .top) {
-            if let item = selectedItem {
-                MetricBubble {
-                    HStack(spacing: 5) {
-                        Text("\(String(format: "%02d", item.hour)):00")
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(.primary).monospacedDigit()
-                        Text("·").foregroundStyle(.tertiary)
-                        Text(item.percent.map { "\(Int($0.rounded())) %" } ?? "无数据")
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(.secondary).monospacedDigit()
-                    }
-                }
-                .padding(.top, 2)
-                .transition(.opacity.combined(with: .scale(scale: 0.95)))
-            }
-        }
-        .animation(.smooth(duration: 0.15), value: selectedItem?.id)
-    }
-
-    private var yDomain: ClosedRange<Double> {
-        let values = data.compactMap { $0.percent }
-        guard let lo = values.min(), let hi = values.max(), lo < hi else { return 90...100 }
-        let pad = max((hi - lo) * 0.2, 1)
-        return max(0, lo - pad)...min(100, hi + pad)
-    }
-}
-
-// MARK: - 每日血氧趋势图
-
-private struct BloodOxygenTrendChart: View {
-    let data: [DailyBloodOxygen]
-    let range: MetricRange
-    @Binding var selection: Date?
-
-    private var validValues: [Double] { data.compactMap { $0.percent } }
-
-    private var selectedItem: DailyBloodOxygen? {
-        guard let selection else { return nil }
-        let nearest = data.min {
-            abs($0.date.timeIntervalSince(selection)) < abs($1.date.timeIntervalSince(selection))
-        }
-        guard let nearest,
-              abs(nearest.date.timeIntervalSince(selection)) <= 12 * 3600 else { return nil }
-        return nearest
-    }
-
-    private let referenceValue: Double = 95
-
-    var body: some View {
-        Chart {
-            RuleMark(y: .value("参考", referenceValue))
-                .foregroundStyle(Color.blue.opacity(0.35))
-                .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 3]))
-                .zIndex(0)
-
-            ForEach(data) { item in
-                if let p = item.percent {
-                    AreaMark(
-                        x: .value("日期", item.date, unit: .day),
-                        yStart: .value("底", yDomain.lowerBound),
-                        yEnd: .value("血氧", p)
-                    )
-                    .foregroundStyle(LinearGradient(
-                        colors: [Color.blue.opacity(0.28), Color.blue.opacity(0.02)],
-                        startPoint: .top, endPoint: .bottom
-                    ))
-                    .interpolationMethod(.catmullRom).zIndex(1)
-
-                    LineMark(x: .value("日期", item.date, unit: .day), y: .value("血氧", p))
-                        .foregroundStyle(Color.blue)
-                        .interpolationMethod(.catmullRom)
-                        .lineStyle(StrokeStyle(lineWidth: 2, lineCap: .round)).zIndex(2)
-                }
-            }
-
-            if let item = selectedItem, let p = item.percent {
-                PointMark(x: .value("日期", item.date, unit: .day), y: .value("血氧", p))
-                    .foregroundStyle(p < referenceValue ? Color.pink : Color.blue)
-                    .symbolSize(60).zIndex(3)
-            }
-        }
-        .chartXSelection(value: $selection)
-        .chartYScale(domain: yDomain)
-        .chartXAxis {
-            AxisMarks(values: MetricXAxis.stride(for: range)) { value in
-                AxisValueLabel {
-                    if let date = value.as(Date.self) {
-                        Text(MetricXAxis.label(for: date, range: range))
-                            .font(.system(size: 10)).foregroundStyle(.secondary)
-                    }
-                }
-            }
-        }
-        .chartYAxis {
-            AxisMarks(position: .trailing, values: .automatic(desiredCount: 3)) { value in
-                AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5, dash: [2, 3]))
-                    .foregroundStyle(Color.primary.opacity(0.08))
-                AxisValueLabel {
-                    if let v = value.as(Double.self) {
-                        Text("\(Int(v))").font(.system(size: 9)).foregroundStyle(.tertiary)
-                    }
-                }
-            }
-        }
-        .overlay(alignment: .top) {
-            if let item = selectedItem {
-                let isLow = (item.percent ?? 100) < referenceValue
-                MetricBubble {
-                    HStack(spacing: 5) {
-                        Text(shortDate(item.date))
-                            .font(.system(size: 12, weight: .semibold)).foregroundStyle(.primary)
-                        Text("·").foregroundStyle(.tertiary)
-                        Text(item.percent.map { "\(Int($0.rounded())) %" } ?? "无数据")
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(isLow ? Color.pink : Color.secondary)
-                            .monospacedDigit()
-                    }
-                }
-                .padding(.top, 2)
-                .transition(.opacity.combined(with: .scale(scale: 0.95)))
-            }
-        }
-        .animation(.smooth(duration: 0.18), value: selectedItem?.id)
-    }
-
-    private func shortDate(_ date: Date) -> String {
-        let f = DateFormatter()
-        f.locale = Locale(identifier: "zh_CN")
-        f.dateFormat = "M月d日 EEE"
-        return f.string(from: date)
-    }
-
-    private var yDomain: ClosedRange<Double> {
-        guard let lo = validValues.min(),
-              let hi = validValues.max(), lo < hi else { return 90...100 }
-        let lower = min(lo, referenceValue) - max((hi - lo) * 0.15, 1)
-        let upper = hi + max((hi - lo) * 0.15, 1)
-        return max(0, lower)...min(100, upper)
     }
 }
 

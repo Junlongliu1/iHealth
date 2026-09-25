@@ -281,3 +281,354 @@ enum MetricHourAxis {
         String(format: "%02d", hour)
     }
 }
+
+// MARK: - 统一 Y 轴样式
+
+@AxisContentBuilder
+func metricYAxis(width: CGFloat = 30) -> some AxisContent {
+    AxisMarks(position: .trailing, values: .automatic(desiredCount: 3)) { value in
+        AxisTick()
+        AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5, dash: [2, 3]))
+            .foregroundStyle(Color.primary.opacity(0.08))
+        AxisValueLabel {
+            if let v = value.as(Double.self) {
+                Text("\(Int(v))")
+                    .font(.system(size: 9))
+                    .foregroundStyle(.tertiary)
+                    .monospacedDigit()
+                    .frame(width: width, alignment: .trailing)
+            }
+        }
+    }
+}
+
+// MARK: - 日视图小时折线图（通用）
+
+struct HourlyLineChart<Item: Identifiable>: View {
+    let data: [Item]
+    let hour: (Item) -> Int
+    let value: (Item) -> Double?
+    let color: Color
+    let valueFormatter: (Double) -> String
+    let fallbackYRange: ClosedRange<Double>
+    var yPaddingRatio: Double = 0.25
+    var clampRange: ClosedRange<Double>? = nil
+    @Binding var selection: Int?
+
+    private var maxHour: Int { data.map(hour).max() ?? 23 }
+    private var values: [Double] { data.compactMap(value) }
+    private var count: Int { values.count }
+
+    private var selectedItem: Item? {
+        guard let selection else { return nil }
+        return data.first { hour($0) == selection }
+    }
+
+    /// 首尾各留半格，避免贴边
+    private var xDomain: ClosedRange<Double> {
+        -0.6...(Double(maxHour) + 0.6)
+    }
+
+    /// 数据点 ≥ 4 用平滑曲线，否则用直线避免过冲
+    private var interpolation: InterpolationMethod {
+        count >= 4 ? .catmullRom : .linear
+    }
+
+    private var yDomain: ClosedRange<Double> {
+        guard let lo = values.min(), let hi = values.max(), lo < hi else {
+            return fallbackYRange
+        }
+        let pad = max((hi - lo) * yPaddingRatio, 2)
+        let lower = lo - pad
+        let upper = hi + pad
+        if let clamp = clampRange {
+            return max(clamp.lowerBound, lower)...min(clamp.upperBound, upper)
+        }
+        return lower...upper
+    }
+
+    var body: some View {
+        Chart {
+            ForEach(data) { item in
+                if let v = value(item) {
+                    AreaMark(
+                        x: .value("小时", Double(hour(item))),
+                        yStart: .value("底", yDomain.lowerBound),
+                        yEnd: .value("值", v)
+                    )
+                    .foregroundStyle(LinearGradient(
+                        colors: [color.opacity(0.26), color.opacity(0.02)],
+                        startPoint: .top, endPoint: .bottom
+                    ))
+                    .interpolationMethod(interpolation)
+
+                    LineMark(
+                        x: .value("小时", Double(hour(item))),
+                        y: .value("值", v)
+                    )
+                    .foregroundStyle(color)
+                    .interpolationMethod(interpolation)
+                    .lineStyle(StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
+
+                    PointMark(
+                        x: .value("小时", Double(hour(item))),
+                        y: .value("值", v)
+                    )
+                    .foregroundStyle(color)
+                    .symbolSize(22)
+                }
+            }
+
+            if let item = selectedItem, let v = value(item) {
+                RuleMark(x: .value("选中", Double(hour(item))))
+                    .foregroundStyle(color.opacity(0.35))
+                    .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
+                    .zIndex(1)
+
+                PointMark(
+                    x: .value("小时", Double(hour(item))),
+                    y: .value("值", v)
+                )
+                .foregroundStyle(color)
+                .symbolSize(60)
+                .zIndex(2)
+            }
+        }
+        .chartXScale(domain: xDomain)
+        .chartYScale(domain: yDomain)
+        .chartXAxis {
+            AxisMarks(values: MetricHourAxis.ticks(upTo: maxHour).map(Double.init)) { mark in
+                AxisValueLabel {
+                    if let h = mark.as(Double.self) {
+                        Text(MetricHourAxis.label(for: Int(h)))
+                            .font(.system(size: 9))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+        }
+        .chartYAxis { metricYAxis(width: 30) }
+        .chartLegend(.hidden)
+        .chartOverlay { proxy in
+            Rectangle()
+                .fill(.clear)
+                .contentShape(Rectangle())
+                .highPriorityGesture(
+                    DragGesture(minimumDistance: 0)
+                        .onChanged { gesture in
+                            guard let raw = proxy.value(atX: gesture.location.x, as: Double.self) else { return }
+                            let h = Int(raw.rounded())
+                            guard (0...maxHour).contains(h) else { return }
+                            if selection != h { selection = h }
+                        }
+                        .onEnded { _ in
+                            withAnimation(.smooth(duration: 0.15)) { selection = nil }
+                        }
+                )
+        }
+        .overlay(alignment: .top) {
+            if let item = selectedItem {
+                MetricBubble {
+                    HStack(spacing: 5) {
+                        Text("\(String(format: "%02d", hour(item))):00")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(.primary)
+                            .monospacedDigit()
+                        Text("·").foregroundStyle(.tertiary)
+                        Text(value(item).map(valueFormatter) ?? "无数据")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(.secondary)
+                            .monospacedDigit()
+                    }
+                }
+                .padding(.top, 2)
+                .transition(.opacity.combined(with: .scale(scale: 0.95)))
+            }
+        }
+        .animation(.smooth(duration: 0.15), value: selectedItem?.id)
+    }
+}
+
+// MARK: - 周 / 月趋势折线图（通用）
+
+struct TrendLineChart<Item: Identifiable>: View {
+    let data: [Item]
+    let date: (Item) -> Date
+    let value: (Item) -> Double?
+    let color: Color
+    let range: MetricRange
+    let valueFormatter: (Double) -> String
+    let fallbackYRange: ClosedRange<Double>
+    var yPaddingRatio: Double = 0.25
+    var clampRange: ClosedRange<Double>? = nil
+    var reference: Reference = .average
+    @Binding var selection: Date?
+
+    enum Reference {
+        case average
+        case fixed(Double)
+        case none
+    }
+
+    private var validItems: [Item] { data.filter { value($0) != nil } }
+    private var validValues: [Double] { data.compactMap(value) }
+    private var count: Int { validValues.count }
+
+    private var selectedItem: Item? {
+        guard let selection else { return nil }
+        let nearest = validItems.min {
+            abs(date($0).timeIntervalSince(selection)) < abs(date($1).timeIntervalSince(selection))
+        }
+        guard let nearest,
+              abs(date(nearest).timeIntervalSince(selection)) <= 12 * 3600 else { return nil }
+        return nearest
+    }
+
+    private var interpolation: InterpolationMethod {
+        count >= 4 ? .catmullRom : .linear
+    }
+
+    /// 首尾各留半天，避免贴边
+    private var xDomain: ClosedRange<Date> {
+        guard let first = validItems.first.map(date),
+              let last = validItems.last.map(date),
+              first < last else {
+            let now = Date()
+            return now.addingTimeInterval(-86400)...now.addingTimeInterval(86400)
+        }
+        let pad: TimeInterval = 12 * 3600
+        return first.addingTimeInterval(-pad)...last.addingTimeInterval(pad)
+    }
+
+    private var referenceValue: Double? {
+        switch reference {
+        case .average:
+            guard !validValues.isEmpty else { return nil }
+            return validValues.reduce(0, +) / Double(validValues.count)
+        case .fixed(let v):
+            return v
+        case .none:
+            return nil
+        }
+    }
+
+    private var yDomain: ClosedRange<Double> {
+        guard let lo = validValues.min(),
+              let hi = validValues.max(),
+              lo < hi else {
+            return fallbackYRange
+        }
+        let pad = max((hi - lo) * yPaddingRatio, 2)
+        var lower = lo - pad
+        var upper = hi + pad
+        if case .fixed(let ref) = reference {
+            lower = min(lower, ref - pad)
+        }
+        if let clamp = clampRange {
+            lower = max(clamp.lowerBound, lower)
+            upper = min(clamp.upperBound, upper)
+        }
+        return lower...upper
+    }
+
+    var body: some View {
+        Chart {
+            if let ref = referenceValue {
+                RuleMark(y: .value("参考", ref))
+                    .foregroundStyle(color.opacity(0.35))
+                    .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 3]))
+                    .zIndex(0)
+            }
+
+            if count == 1, let item = validItems.first, let v = value(item) {
+                PointMark(
+                    x: .value("日期", date(item)),
+                    y: .value("值", v)
+                )
+                .foregroundStyle(color)
+                .symbolSize(80)
+            } else {
+                ForEach(data) { item in
+                    if let v = value(item) {
+                        AreaMark(
+                            x: .value("日期", date(item)),
+                            yStart: .value("底", yDomain.lowerBound),
+                            yEnd: .value("值", v)
+                        )
+                        .foregroundStyle(LinearGradient(
+                            colors: [color.opacity(0.26), color.opacity(0.02)],
+                            startPoint: .top, endPoint: .bottom
+                        ))
+                        .interpolationMethod(interpolation)
+                        .zIndex(1)
+
+                        LineMark(
+                            x: .value("日期", date(item)),
+                            y: .value("值", v)
+                        )
+                        .foregroundStyle(color)
+                        .interpolationMethod(interpolation)
+                        .lineStyle(StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
+                        .zIndex(2)
+                    }
+                }
+            }
+
+            if let item = selectedItem, let v = value(item) {
+                RuleMark(x: .value("选中", date(item)))
+                    .foregroundStyle(color.opacity(0.35))
+                    .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
+                    .zIndex(3)
+
+                PointMark(
+                    x: .value("日期", date(item)),
+                    y: .value("值", v)
+                )
+                .foregroundStyle(color)
+                .symbolSize(80)
+                .zIndex(4)
+            }
+        }
+        .chartXSelection(value: $selection)
+        .chartXScale(domain: xDomain)
+        .chartYScale(domain: yDomain)
+        .chartXAxis {
+            AxisMarks(values: MetricXAxis.stride(for: range)) { mark in
+                AxisValueLabel {
+                    if let d = mark.as(Date.self) {
+                        Text(MetricXAxis.label(for: d, range: range))
+                            .font(.system(size: 10))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+        }
+        .chartYAxis { metricYAxis(width: 30) }
+        .overlay(alignment: .top) {
+            if let item = selectedItem {
+                MetricBubble {
+                    HStack(spacing: 5) {
+                        Text(shortDate(date(item)))
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(.primary)
+                        Text("·").foregroundStyle(.tertiary)
+                        Text(value(item).map(valueFormatter) ?? "无数据")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(.secondary)
+                            .monospacedDigit()
+                    }
+                }
+                .padding(.top, 2)
+                .transition(.opacity.combined(with: .scale(scale: 0.95)))
+            }
+        }
+        .animation(.smooth(duration: 0.18), value: selectedItem?.id)
+    }
+
+    private func shortDate(_ date: Date) -> String {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "zh_CN")
+        f.dateFormat = "M月d日 EEE"
+        return f.string(from: date)
+    }
+}
