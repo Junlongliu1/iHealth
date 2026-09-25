@@ -12,6 +12,7 @@ import HealthKit
 struct HealthTabView: View {
     @State private var healthManager = HealthManager.shared
     @State private var todayVitals: HealthManager.VitalsData?
+    @State private var todayHourlySteps: [HourlySteps] = []
 
     private let columns = [
         GridItem(.flexible(), spacing: 14),
@@ -30,6 +31,13 @@ struct HealthTabView: View {
                     LazyVGrid(columns: columns, spacing: 14) {
                         sleepCard
                         vitalsCard
+
+                        NavigationLink {
+                            StepsDetailView()
+                        } label: {
+                            StepsCard(hourly: todayHourlySteps)
+                        }
+                        .buttonStyle(.plain)
                     }
                 }
             }
@@ -40,7 +48,12 @@ struct HealthTabView: View {
         .navigationTitle("健康")
         .task {
             await healthManager.requestAuthorization()
-            todayVitals = await VitalsCalculator.shared.computeToday()
+
+            async let vitals = VitalsCalculator.shared.computeToday()
+            async let steps = healthManager.fetchTodayHourlySteps()
+
+            todayVitals = await vitals
+            todayHourlySteps = await steps
         }
     }
 

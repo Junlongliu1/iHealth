@@ -103,7 +103,8 @@ final class HealthManager {
 
         var typesToRead: Set<HKObjectType> = [
             HKObjectType.activitySummaryType(),
-            HKObjectType.categoryType(forIdentifier: .sleepAnalysis)!
+            HKObjectType.categoryType(forIdentifier: .sleepAnalysis)!,
+            HKObjectType.quantityType(forIdentifier: .stepCount)!
         ]
 
         for kind in VitalKind.allCases {
@@ -224,5 +225,126 @@ final class HealthManager {
             AppLogError("查询生命体征样本失败: \(error)")
             return []
         }
+    }
+
+    // MARK: - 步数
+
+    /// 查询指定时间范围内的累计步数
+    func fetchStepCount(from startDate: Date, to endDate: Date) async -> Double {
+        guard let type = HKQuantityType.quantityType(forIdentifier: .stepCount) else { return 0 }
+        let predicate = HKQuery.predicateForSamples(withStart: startDate, end: endDate)
+
+        let descriptor = HKStatisticsQueryDescriptor(
+            predicate: .quantitySample(type: type, predicate: predicate),
+            options: .cumulativeSum
+        )
+
+        do {
+            let statistics = try await descriptor.result(for: healthStore)
+            return statistics?.sumQuantity()?.doubleValue(for: .count()) ?? 0
+        } catch {
+            AppLogError("查询步数失败: \(error)")
+            return 0
+        }
+    }
+
+    /// 指定日期按小时分组的步数。
+    /// - 今天：从 0 点到当前小时
+    /// - 历史某天：0–23 完整返回，缺失小时补 0
+    func fetchHourlySteps(for day: Date) async -> [HourlySteps] {
+        let calendar = Calendar.current
+        let start = calendar.startOfDay(for: day)
+        let now = Date()
+        let isToday = calendar.isDateInToday(day)
+
+        let end: Date
+        let maxHour: Int
+        if isToday {
+            end = now
+            maxHour = calendar.component(.hour, from: now)
+        } else {
+            end = calendar.date(byAdding: .day, value: 1, to: start)!
+            maxHour = 23
+        }
+
+        guard let type = HKQuantityType.quantityType(forIdentifier: .stepCount) else { return [] }
+        let predicate = HKQuery.predicateForSamples(withStart: start, end: end)
+
+        let descriptor = HKStatisticsCollectionQueryDescriptor(
+            predicate: .quantitySample(type: type, predicate: predicate),
+            options: .cumulativeSum,
+            anchorDate: start,
+            intervalComponents: DateComponents(hour: 1)
+        )
+
+        do {
+            let collection = try await descriptor.result(for: healthStore)
+
+            var byHour: [Int: Double] = [:]
+            collection.enumerateStatistics(from: start, to: end) { statistics, _ in
+                let hour = calendar.component(.hour, from: statistics.startDate)
+                byHour[hour] = statistics.sumQuantity()?.doubleValue(for: .count()) ?? 0
+            }
+
+            return (0...maxHour).map { hour in
+                HourlySteps(hour: hour, steps: byHour[hour] ?? 0)
+            }
+        } catch {
+            AppLogError("查询每小时步数失败: \(error)")
+            return []
+        }
+    }
+
+    /// 今日每小时步数（0 点至当前小时）
+    func fetchTodayHourlySteps() async -> [HourlySteps] {
+        await fetchHourlySteps(for: Date())
+    }
+
+    /// 指定日期区间按天分组的步数，返回从 start 到 end 前一天的完整序列。
+    func fetchDailySteps(from startDate: Date, to endDate: Date) async -> [DailySteps] {
+        let calendar = Calendar.current
+        let start = calendar.startOfDay(for: startDate)
+
+        guard let type = HKQuantityType.quantityType(forIdentifier: .stepCount) else { return [] }
+        let predicate = HKQuery.predicateForSamples(withStart: start, end: endDate)
+
+        let descriptor = HKStatisticsCollectionQueryDescriptor(
+            predicate: .quantitySample(type: type, predicate: predicate),
+            options: .cumulativeSum,
+            anchorDate: start,
+            intervalComponents: DateComponents(day: 1)
+        )
+
+        do {
+            let collection = try await descriptor.result(for: healthStore)
+
+            var byDay: [Date: Double] = [:]
+            collection.enumerateStatistics(from: start, to: endDate) { statistics, _ in
+                let day = calendar.startOfDay(for: statistics.startDate)
+                byDay[day] = statistics.sumQuantity()?.doubleValue(for: .count()) ?? 0
+            }
+
+            var days: [DailySteps] = []
+            var current = start
+            while current < endDate {
+                days.append(DailySteps(date: current, steps: byDay[current] ?? 0))
+                guard let next = calendar.date(byAdding: .day, value: 1, to: current) else { break }
+                current = next
+            }
+            return days
+        } catch {
+            AppLogError("查询每日步数失败: \(error)")
+            return []
+        }
+    }
+
+    /// 某一小时内的原始步数样本（用于小时详情页）
+    func fetchStepSamples(from startDate: Date, to endDate: Date) async -> [VitalSample] {
+        await fetchVitalSamples(
+            identifier: .stepCount,
+            unit: .count(),
+            from: startDate,
+            to: endDate
+        )
     }
 }
