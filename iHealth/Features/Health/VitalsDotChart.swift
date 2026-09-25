@@ -4,6 +4,7 @@
 //
 //  生命体征环形图。
 //  高度自适应：圆环大小随卡片高度缩放。
+//  显示一位小数。
 //
 
 import SwiftUI
@@ -20,7 +21,6 @@ struct VitalsDotChart: View {
         let value: Double?
         let normalRange: ClosedRange<Double>
         let color: Color
-        let decimals: Int
 
         var isNormal: Bool {
             guard let value else { return true }
@@ -36,7 +36,7 @@ struct VitalsDotChart: View {
 
         var displayValue: String {
             guard let value else { return "--" }
-            return decimals > 0 ? String(format: "%.\(decimals)f", value) : "\(Int(value))"
+            return String(format: "%.1f", value)
         }
 
         var activeColor: Color { isNormal ? color : .pink }
@@ -46,15 +46,15 @@ struct VitalsDotChart: View {
         let sleepHours: Double? = sleepDuration.map { $0 / 3600 }
         return [
             VitalMetric(name: "心率", value: vitals?.heartRate,
-                        normalRange: 50...100, color: .red, decimals: 0),
+                        normalRange: 40...60, color: .red),
             VitalMetric(name: "呼吸", value: vitals?.respiratoryRate,
-                        normalRange: 12...20, color: .cyan, decimals: 0),
+                        normalRange: 12...20, color: .cyan),
             VitalMetric(name: "体温", value: vitals?.wristTemperature,
-                        normalRange: 35.0...37.5, color: .orange, decimals: 1),
+                        normalRange: 33.0...36.0, color: .orange),
             VitalMetric(name: "血氧", value: vitals?.bloodOxygen,
-                        normalRange: 95...100, color: .blue, decimals: 0),
+                        normalRange: 95...100, color: .blue),
             VitalMetric(name: "睡眠", value: sleepHours,
-                        normalRange: 7...9, color: .indigo, decimals: 1)
+                        normalRange: 7...9, color: .indigo)
         ]
     }
 
@@ -62,12 +62,9 @@ struct VitalsDotChart: View {
         GeometryReader { geo in
             let count = max(metrics.count, 1)
             let totalSpacing = rowSpacing * CGFloat(count - 1)
-            // 每行分到的高度
             let rowHeight = max((geo.size.height - totalSpacing) / CGFloat(count), 14)
-            // 圆环大小随行高缩放，夹在 14~22 之间
             let ringSize = min(22, max(14, rowHeight - 2))
-            // 数值字号随行高缩放，夹在 14~17 之间
-            let valueSize = min(17, max(13, rowHeight * 0.85))
+            let valueSize = min(17, max(12, rowHeight * 0.82))
 
             VStack(spacing: rowSpacing) {
                 ForEach(metrics) { metric in
@@ -80,7 +77,6 @@ struct VitalsDotChart: View {
 
     private func row(_ metric: VitalMetric, ringSize: CGFloat, valueSize: CGFloat) -> some View {
         HStack(spacing: 8) {
-            // 小圆环
             ZStack {
                 Circle()
                     .stroke(Color.primary.opacity(0.08), lineWidth: max(2, ringSize * 0.14))
@@ -101,14 +97,12 @@ struct VitalsDotChart: View {
             }
             .frame(width: ringSize, height: ringSize)
 
-            // 名称
             Text(metric.name)
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
 
             Spacer(minLength: 4)
 
-            // 数值
             Text(metric.displayValue)
                 .font(.system(size: valueSize, weight: .bold, design: .rounded))
                 .foregroundStyle(metric.value == nil

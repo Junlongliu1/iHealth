@@ -66,7 +66,7 @@ enum VitalKind: String, CaseIterable, Identifiable {
     }
 
     var decimals: Int {
-        self == .wristTemperature ? 1 : 0
+        1
     }
 
     /// 睡眠场景下的参考范围
@@ -592,7 +592,7 @@ struct VitalsDetailView: View {
         guard let value else { return "--" }
         return decimals > 0 ? String(format: "%.\(decimals)f", value) : "\(Int(value))"
     }
-
+    
     private func formatShort(_ value: Double, decimals: Int) -> String {
         decimals > 0 ? String(format: "%.\(decimals)f", value) : "\(Int(value))"
     }
