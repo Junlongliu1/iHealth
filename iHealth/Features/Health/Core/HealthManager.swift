@@ -107,6 +107,11 @@ final class HealthManager {
             HKObjectType.quantityType(forIdentifier: .stepCount)!
         ]
 
+        // 日照时间（Time in Daylight）
+        if let daylightType = HKQuantityType.quantityType(forIdentifier: .timeInDaylight) {
+            typesToRead.insert(daylightType)
+        }
+
         for kind in VitalKind.allCases {
             if let type = HKQuantityType.quantityType(forIdentifier: kind.identifier) {
                 typesToRead.insert(type)
@@ -346,5 +351,97 @@ final class HealthManager {
             from: startDate,
             to: endDate
         )
+    }
+
+    // MARK: - 日照
+
+    /// 指定日期按小时分组的日照时长（分钟）。
+    /// - 今天：从 0 点到当前小时
+    /// - 历史某天：0–23 完整返回，缺失小时补 0
+    func fetchHourlyDaylight(for day: Date) async -> [HourlyDaylight] {
+        let calendar = Calendar.current
+        let start = calendar.startOfDay(for: day)
+        let now = Date()
+        let isToday = calendar.isDateInToday(day)
+
+        let end: Date
+        let maxHour: Int
+        if isToday {
+            end = now
+            maxHour = calendar.component(.hour, from: now)
+        } else {
+            end = calendar.date(byAdding: .day, value: 1, to: start)!
+            maxHour = 23
+        }
+
+        guard let type = HKQuantityType.quantityType(forIdentifier: .timeInDaylight) else { return [] }
+        let predicate = HKQuery.predicateForSamples(withStart: start, end: end)
+
+        let descriptor = HKStatisticsCollectionQueryDescriptor(
+            predicate: .quantitySample(type: type, predicate: predicate),
+            options: .cumulativeSum,
+            anchorDate: start,
+            intervalComponents: DateComponents(hour: 1)
+        )
+
+        do {
+            let collection = try await descriptor.result(for: healthStore)
+
+            var byHour: [Int: Double] = [:]
+            collection.enumerateStatistics(from: start, to: end) { statistics, _ in
+                let hour = calendar.component(.hour, from: statistics.startDate)
+                byHour[hour] = statistics.sumQuantity()?.doubleValue(for: .minute()) ?? 0
+            }
+
+            return (0...maxHour).map { hour in
+                HourlyDaylight(hour: hour, minutes: byHour[hour] ?? 0)
+            }
+        } catch {
+            AppLogError("查询每小时日照失败: \(error)")
+            return []
+        }
+    }
+
+    /// 今日每小时日照（0 点至当前小时）
+    func fetchTodayHourlyDaylight() async -> [HourlyDaylight] {
+        await fetchHourlyDaylight(for: Date())
+    }
+
+    /// 指定日期区间按天分组的日照时长（分钟）
+    func fetchDailyDaylight(from startDate: Date, to endDate: Date) async -> [DailyDaylight] {
+        let calendar = Calendar.current
+        let start = calendar.startOfDay(for: startDate)
+
+        guard let type = HKQuantityType.quantityType(forIdentifier: .timeInDaylight) else { return [] }
+        let predicate = HKQuery.predicateForSamples(withStart: start, end: endDate)
+
+        let descriptor = HKStatisticsCollectionQueryDescriptor(
+            predicate: .quantitySample(type: type, predicate: predicate),
+            options: .cumulativeSum,
+            anchorDate: start,
+            intervalComponents: DateComponents(day: 1)
+        )
+
+        do {
+            let collection = try await descriptor.result(for: healthStore)
+
+            var byDay: [Date: Double] = [:]
+            collection.enumerateStatistics(from: start, to: endDate) { statistics, _ in
+                let day = calendar.startOfDay(for: statistics.startDate)
+                byDay[day] = statistics.sumQuantity()?.doubleValue(for: .minute()) ?? 0
+            }
+
+            var days: [DailyDaylight] = []
+            var current = start
+            while current < endDate {
+                days.append(DailyDaylight(date: current, minutes: byDay[current] ?? 0))
+                guard let next = calendar.date(byAdding: .day, value: 1, to: current) else { break }
+                current = next
+            }
+            return days
+        } catch {
+            AppLogError("查询每日日照失败: \(error)")
+            return []
+        }
     }
 }

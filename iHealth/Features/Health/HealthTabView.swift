@@ -13,6 +13,7 @@ struct HealthTabView: View {
     @State private var healthManager = HealthManager.shared
     @State private var todayVitals: HealthManager.VitalsData?
     @State private var todayHourlySteps: [HourlySteps] = []
+    @State private var todayHourlyDaylight: [HourlyDaylight] = []
 
     private let columns = [
         GridItem(.flexible(), spacing: 14),
@@ -38,6 +39,13 @@ struct HealthTabView: View {
                             StepsCard(hourly: todayHourlySteps)
                         }
                         .buttonStyle(.plain)
+
+                        NavigationLink {
+                            DaylightDetailView()
+                        } label: {
+                            DaylightCard(hourly: todayHourlyDaylight)
+                        }
+                        .buttonStyle(.plain)
                     }
                 }
             }
@@ -51,9 +59,11 @@ struct HealthTabView: View {
 
             async let vitals = VitalsCalculator.shared.computeToday()
             async let steps = healthManager.fetchTodayHourlySteps()
+            async let daylight = healthManager.fetchTodayHourlyDaylight()
 
             todayVitals = await vitals
             todayHourlySteps = await steps
+            todayHourlyDaylight = await daylight
         }
     }
 
