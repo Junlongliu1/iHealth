@@ -4,7 +4,8 @@
 //
 //  睡眠详情页。
 //  支持「日 / 周 / 月」三种时间范围。
-//  日视图：按睡眠会话归属，避免跨午夜的一晚被拆到两天。
+//  与苹果健康一致：按「睡眠日（18:00–18:00）」归属。
+//  周 / 月切换带方向感的 push 过渡。
 //
 
 import SwiftUI
@@ -25,14 +26,6 @@ enum SleepRange: String, CaseIterable, Identifiable {
         case .month: return "月"
         }
     }
-
-    var daysBack: Int {
-        switch self {
-        case .day:   return 0
-        case .week:  return 6
-        case .month: return 29
-        }
-    }
 }
 
 // MARK: - 每日总睡眠
@@ -51,22 +44,24 @@ struct SleepDetailView: View {
 
     @State private var selectedRange: SleepRange = .day
     @State private var currentDay: Date = Calendar.current.startOfDay(for: Date())
+    @State private var weekAnchor: Date = Date()
+    @State private var monthAnchor: Date = Date()
+
     @State private var samples: [HKCategorySample] = []
     @State private var isLoading = false
-    @State private var dayCache: [Date: [HKCategorySample]] = [:]
-    @State private var rangeCache: [SleepRange: [HKCategorySample]] = [:]
+    @State private var slideDirection: Edge = .trailing
 
-    /// 聚合成「一晚」的最大间隔：超过 1 小时就认为是两段独立的睡眠
-    private let sessionGap: TimeInterval = 60 * 60
+    @State private var dayCache: [Date: [HKCategorySample]] = [:]
+    @State private var weekCache: [Date: [HKCategorySample]] = [:]
+    @State private var monthCache: [Date: [HKCategorySample]] = [:]
+
+    @State private var selectedTrendDay: Date?
 
     var body: some View {
         ScrollView {
             VStack(spacing: 16) {
                 rangePicker
-
-                if selectedRange == .day {
-                    dayNavigator
-                }
+                rangeNavigator
 
                 if isLoading && samples.isEmpty {
                     loadingState
@@ -74,6 +69,8 @@ struct SleepDetailView: View {
                     emptyState
                 } else {
                     content
+                        .id(contentId)
+                        .transition(.push(from: slideDirection))
                 }
             }
             .padding(.horizontal, DSLayout.horizontalPadding)
@@ -84,10 +81,22 @@ struct SleepDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .task { await loadCurrent() }
         .onChange(of: selectedRange) { _, _ in
+            selectedTrendDay = nil
             Task { await loadCurrent() }
         }
-        .onChange(of: currentDay) { _, _ in
-            Task { await loadCurrent() }
+    }
+
+    // MARK: - 内容标识（触发 push 过渡的关键）
+
+    private var contentId: String {
+        let calendar = Calendar.current
+        switch selectedRange {
+        case .day:
+            return "d-\(calendar.startOfDay(for: currentDay).timeIntervalSince1970)"
+        case .week:
+            return "w-\(calendar.dateInterval(of: .weekOfYear, for: weekAnchor)!.start.timeIntervalSince1970)"
+        case .month:
+            return "m-\(calendar.dateInterval(of: .month, for: monthAnchor)!.start.timeIntervalSince1970)"
         }
     }
 
@@ -103,25 +112,28 @@ struct SleepDetailView: View {
         .labelsHidden()
     }
 
-    // MARK: - 日视图日期导航
+    // MARK: - 导航条
 
-    private var dayNavigator: some View {
+    private var rangeNavigator: some View {
         HStack(spacing: 12) {
-            Button { shiftDay(by: -1) } label: {
+            Button { shift(by: -1) } label: {
                 navArrow(systemName: "chevron.left", enabled: true)
             }
             .buttonStyle(.plain)
 
             Spacer(minLength: 4)
 
-            Text(dayTitle)
+            Text(navTitle)
                 .font(.system(size: 14, weight: .medium))
                 .foregroundStyle(.primary)
                 .monospacedDigit()
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+                .contentTransition(.interpolate)
 
             Spacer(minLength: 4)
 
-            Button { shiftDay(by: 1) } label: {
+            Button { shift(by: 1) } label: {
                 navArrow(systemName: "chevron.right", enabled: canGoForward)
             }
             .buttonStyle(.plain)
@@ -145,7 +157,7 @@ struct SleepDetailView: View {
     private var content: some View {
         switch selectedRange {
         case .day:
-            dayContent.simultaneousGesture(daySwipeGesture)
+            dayContent
         case .week:
             trendContent(for: .week)
         case .month:
@@ -157,7 +169,6 @@ struct SleepDetailView: View {
 
     private var dayContent: some View {
         SleepSummaryView(samples: samples)
-            .id(currentDay)
             .padding(16)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(cardBackground)
@@ -168,116 +179,191 @@ struct SleepDetailView: View {
             )
     }
 
-    // MARK: - 左右滑动切换日期
-
-    private var daySwipeGesture: some Gesture {
-        DragGesture(minimumDistance: 40)
-            .onEnded { value in
-                let h = value.translation.width
-                let v = value.translation.height
-                guard abs(h) > abs(v) * 1.5, abs(h) > 50 else { return }
-                if h < 0 { shiftDay(by: 1) } else { shiftDay(by: -1) }
-            }
-    }
-
-    private var canGoForward: Bool {
-        let calendar = Calendar.current
-        return calendar.startOfDay(for: currentDay)
-            < calendar.startOfDay(for: Date())
-    }
-
-    private func shiftDay(by offset: Int) {
-        let calendar = Calendar.current
-        let today = calendar.startOfDay(for: Date())
-        guard let newDay = calendar.date(byAdding: .day, value: offset, to: currentDay),
-              newDay <= today else { return }
-        withAnimation(.smooth(duration: 0.22)) {
-            currentDay = newDay
-        }
-    }
-
-    // MARK: - 日期标题
-
-    private var dayTitle: String {
-        let calendar = Calendar.current
-        let today = calendar.startOfDay(for: Date())
-        let day = calendar.startOfDay(for: currentDay)
-        let diff = calendar.dateComponents([.day], from: day, to: today).day ?? 0
-
-        switch diff {
-        case 0: return "今天"
-        case 1: return "昨天"
-        case 2: return "前天"
-        default:
-            let f = DateFormatter()
-            f.locale = Locale(identifier: "zh_CN")
-            f.dateFormat = "M月d日 EEE"
-            return f.string(from: day)
-        }
-    }
-
-    // MARK: - 周 / 月视图
+    // MARK: - 周 / 月视图（单卡片，与日视图同构）
 
     private func trendContent(for range: SleepRange) -> some View {
         let daily = dailyTotals(from: samples, range: range)
         let summary = SleepSummary(samples: samples)
         let avg = averageTotal(daily)
-        let title = range == .week ? "本周平均" : "本月平均"
 
-        return VStack(spacing: 16) {
-            VStack(alignment: .leading, spacing: 14) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(title)
+        return VStack(alignment: .leading, spacing: 12) {
+            // 标题块
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text("睡眠时间")
                         .font(.system(size: 13))
                         .foregroundStyle(.secondary)
-
-                    Text(formatHourMinute(avg))
-                        .font(.system(size: 28, weight: .bold, design: .rounded))
-                        .foregroundStyle(.primary)
-                        .monospacedDigit()
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.6)
+                    Spacer()
                 }
 
-                LazyVGrid(
-                    columns: [
-                        GridItem(.flexible(), alignment: .leading),
-                        GridItem(.flexible(), alignment: .leading)
-                    ],
-                    alignment: .leading,
-                    spacing: 8
-                ) {
-                    SleepStageItem(label: "深睡", duration: summary.deep,  color: .indigo)
-                    SleepStageItem(label: "浅睡", duration: summary.core,  color: .blue)
-                    SleepStageItem(label: "眼动", duration: summary.rem,   color: .cyan)
-                    SleepStageItem(label: "清醒", duration: summary.awake, color: .orange)
+                Text(formatHourMinute(avg))
+                    .font(.system(size: 28, weight: .bold, design: .rounded))
+                    .foregroundStyle(.primary)
+                    .monospacedDigit()
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.6)
+                    .contentTransition(.numericText())
+            }
+
+            // 中部：每日柱状图
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text("每日睡眠")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.secondary)
+
+                    Spacer(minLength: 4)
+
+                    Text("点击查看某天")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.tertiary)
+                }
+
+                SleepTrendChart(
+                    data: daily,
+                    range: range,
+                    selection: $selectedTrendDay
+                )
+                .frame(height: 120)
+            }
+
+            // 2×2 阶段统计
+            LazyVGrid(
+                columns: [
+                    GridItem(.flexible(), alignment: .leading),
+                    GridItem(.flexible(), alignment: .leading)
+                ],
+                alignment: .leading,
+                spacing: 8
+            ) {
+                SleepStageItem(label: "深睡", duration: summary.deep,  color: .indigo)
+                SleepStageItem(label: "浅睡", duration: summary.core,  color: .blue)
+                SleepStageItem(label: "眼动", duration: summary.rem,   color: .cyan)
+                SleepStageItem(label: "清醒", duration: summary.awake, color: .orange)
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(cardBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+        )
+    }
+
+    // MARK: - 切换逻辑（先加载，再原子更新 + push 过渡）
+
+    private func shift(by offset: Int) {
+        let calendar = Calendar.current
+        let now = Date()
+
+        switch selectedRange {
+        case .day:
+            let today = calendar.startOfDay(for: now)
+            guard let newDay = calendar.date(byAdding: .day, value: offset, to: currentDay),
+                  newDay <= today else { return }
+
+            slideDirection = offset > 0 ? .trailing : .leading
+            selectedTrendDay = nil
+
+            Task {
+                let fetched = await fetchDay(newDay)
+                withAnimation(.smooth(duration: 0.32)) {
+                    currentDay = newDay
+                    samples = fetched
                 }
             }
-            .padding(16)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(cardBackground)
-            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .stroke(Color.primary.opacity(0.08), lineWidth: 1)
-            )
 
-            VStack(alignment: .leading, spacing: 10) {
-                Text("每日睡眠")
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(.secondary)
+        case .week:
+            guard let newWeek = calendar.date(byAdding: .weekOfYear, value: offset, to: weekAnchor) else { return }
+            let thisWeekStart = calendar.dateInterval(of: .weekOfYear, for: now)!.start
+            let newWeekStart = calendar.dateInterval(of: .weekOfYear, for: newWeek)!.start
+            guard newWeekStart <= thisWeekStart else { return }
 
-                SleepTrendChart(data: daily, range: range)
-                    .frame(height: 180)
+            slideDirection = offset > 0 ? .trailing : .leading
+            selectedTrendDay = nil
+
+            Task {
+                let fetched = await fetchWeek(newWeek)
+                withAnimation(.smooth(duration: 0.32)) {
+                    weekAnchor = newWeek
+                    samples = fetched
+                }
             }
-            .padding(16)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(cardBackground)
-            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .stroke(Color.primary.opacity(0.08), lineWidth: 1)
-            )
+
+        case .month:
+            guard let newMonth = calendar.date(byAdding: .month, value: offset, to: monthAnchor) else { return }
+            let thisMonthStart = calendar.dateInterval(of: .month, for: now)!.start
+            let newMonthStart = calendar.dateInterval(of: .month, for: newMonth)!.start
+            guard newMonthStart <= thisMonthStart else { return }
+
+            slideDirection = offset > 0 ? .trailing : .leading
+            selectedTrendDay = nil
+
+            Task {
+                let fetched = await fetchMonth(newMonth)
+                withAnimation(.smooth(duration: 0.32)) {
+                    monthAnchor = newMonth
+                    samples = fetched
+                }
+            }
+        }
+    }
+
+    // MARK: - 前进 / 后退能力
+
+    private var canGoForward: Bool {
+        let calendar = Calendar.current
+        let now = Date()
+        switch selectedRange {
+        case .day:
+            return calendar.startOfDay(for: currentDay) < calendar.startOfDay(for: now)
+        case .week:
+            let thisWeekStart = calendar.dateInterval(of: .weekOfYear, for: now)!.start
+            let anchorWeekStart = calendar.dateInterval(of: .weekOfYear, for: weekAnchor)!.start
+            return anchorWeekStart < thisWeekStart
+        case .month:
+            let thisMonthStart = calendar.dateInterval(of: .month, for: now)!.start
+            let anchorMonthStart = calendar.dateInterval(of: .month, for: monthAnchor)!.start
+            return anchorMonthStart < thisMonthStart
+        }
+    }
+
+    // MARK: - 标题
+
+    private var navTitle: String {
+        let calendar = Calendar.current
+        let now = Date()
+
+        switch selectedRange {
+        case .day:
+            let today = calendar.startOfDay(for: now)
+            let day = calendar.startOfDay(for: currentDay)
+            if day == today { return "今天" }
+            let f = DateFormatter()
+            f.locale = Locale(identifier: "zh_CN")
+            f.dateFormat = "M月d日 EEE"
+            return f.string(from: day)
+
+        case .week:
+            let thisWeekStart = calendar.dateInterval(of: .weekOfYear, for: now)!.start
+            let anchorWeekStart = calendar.dateInterval(of: .weekOfYear, for: weekAnchor)!.start
+            if anchorWeekStart == thisWeekStart { return "本周" }
+            let weekEnd = calendar.date(byAdding: .day, value: 6, to: anchorWeekStart)!
+            let f = DateFormatter()
+            f.locale = Locale(identifier: "zh_CN")
+            f.dateFormat = "M月d日"
+            return "\(f.string(from: anchorWeekStart))–\(f.string(from: weekEnd))"
+
+        case .month:
+            let thisMonthStart = calendar.dateInterval(of: .month, for: now)!.start
+            let anchorMonthStart = calendar.dateInterval(of: .month, for: monthAnchor)!.start
+            if anchorMonthStart == thisMonthStart { return "本月" }
+            let f = DateFormatter()
+            f.locale = Locale(identifier: "zh_CN")
+            f.dateFormat = "yyyy年M月"
+            return f.string(from: anchorMonthStart)
         }
     }
 
@@ -297,113 +383,127 @@ struct SleepDetailView: View {
         .padding(.top, 40)
     }
 
-    // MARK: - 数据加载
+    // MARK: - 首次加载 / 切换范围
 
     private func loadCurrent() async {
         switch selectedRange {
         case .day:
-            await loadDay(currentDay)
-        case .week, .month:
-            await loadRange(selectedRange)
+            samples = await fetchDay(currentDay)
+        case .week:
+            samples = await fetchWeek(weekAnchor)
+        case .month:
+            samples = await fetchMonth(monthAnchor)
         }
     }
 
-    // MARK: ★ 核心修改：按会话归属
+    // MARK: - 纯加载（带缓存）
 
-    private func loadDay(_ day: Date) async {
+    private func fetchDay(_ day: Date) async -> [HKCategorySample] {
         let calendar = Calendar.current
         let key = calendar.startOfDay(for: day)
-        if let cached = dayCache[key] {
-            samples = cached
-            return
-        }
+        if let cached = dayCache[key] { return cached }
 
-        isLoading = true
-
-        let dayStart = calendar.startOfDay(for: day)
-        let dayEnd = calendar.date(byAdding: .day, value: 1, to: dayStart)!
-
-        // 1. 放宽查询范围，保证跨午夜的一整晚能被完整抓到
-        let queryStart = calendar.date(byAdding: .day, value: -1, to: dayStart)!
-        let queryEnd = calendar.date(byAdding: .day, value: 1, to: dayEnd)!
+        let (sleepDayStart, sleepDayEnd) = SleepDay.window(for: day)
+        let queryStart = calendar.date(byAdding: .day, value: -1, to: sleepDayStart)!
+        let queryEnd = calendar.date(byAdding: .day, value: 1, to: sleepDayEnd)!
 
         let raw = await healthManager.fetchSleepSamples(from: queryStart, to: queryEnd)
-
-        // 2. 把散段聚合成「睡眠会话」
-        let sessions = sleepSessions(from: raw)
-
-        // 3. 按会话的 endDate 归属：会话结束于目标日 → 归到目标日
-        let matched = sessions.filter { session in
-            guard let last = session.last else { return false }
-            return calendar.isDate(last.endDate, inSameDayAs: day)
+        let fetched = raw.filter {
+            $0.startDate >= sleepDayStart && $0.startDate < sleepDayEnd
         }
-
-        let fetched = matched.flatMap { $0 }
         dayCache[key] = fetched
-        samples = fetched
-        isLoading = false
+        return fetched
     }
 
-    private func loadRange(_ range: SleepRange) async {
-        if let cached = rangeCache[range] {
-            samples = cached
-            return
-        }
-
-        isLoading = true
+    private func fetchWeek(_ anchor: Date) async -> [HKCategorySample] {
         let calendar = Calendar.current
-        let todayStart = calendar.startOfDay(for: Date())
-        let end = calendar.date(byAdding: .day, value: 1, to: todayStart)!
-        let start = calendar.date(byAdding: .day, value: -range.daysBack - 1, to: todayStart)!
-        let raw = await healthManager.fetchSleepSamples(from: start, to: end)
+        let key = calendar.startOfDay(for: anchor)
+        if let cached = weekCache[key] { return cached }
 
-        // 周 / 月也先聚合，避免跨午夜被拆到两天
-        let sessions = sleepSessions(from: raw)
-        let fetched = sessions.flatMap { $0 }
-        rangeCache[range] = fetched
-        samples = fetched
-        isLoading = false
+        let (rangeStart, rangeEnd) = weekWindow(for: anchor)
+        let queryStart = calendar.date(byAdding: .day, value: -1, to: rangeStart)!
+        let queryEnd = calendar.date(byAdding: .day, value: 1, to: rangeEnd)!
+
+        let raw = await healthManager.fetchSleepSamples(from: queryStart, to: queryEnd)
+        let fetched = raw.filter {
+            $0.startDate >= rangeStart && $0.startDate < rangeEnd
+        }
+        weekCache[key] = fetched
+        return fetched
     }
 
-    // MARK: - 会话聚合
+    private func fetchMonth(_ anchor: Date) async -> [HKCategorySample] {
+        let calendar = Calendar.current
+        let key = calendar.startOfDay(for: anchor)
+        if let cached = monthCache[key] { return cached }
 
-    /// 把散落的样本聚合成「睡眠会话」：
-    /// 相邻两条样本间隔 < sessionGap（1 小时）就视为同一晚。
-    private func sleepSessions(from samples: [HKCategorySample]) -> [[HKCategorySample]] {
-        let sorted = samples.sorted { $0.startDate < $1.startDate }
-        var sessions: [[HKCategorySample]] = []
-        var current: [HKCategorySample] = []
-        var lastEnd: Date?
+        let (rangeStart, rangeEnd) = monthWindow(for: anchor)
+        let queryStart = calendar.date(byAdding: .day, value: -1, to: rangeStart)!
+        let queryEnd = calendar.date(byAdding: .day, value: 1, to: rangeEnd)!
 
-        for s in sorted {
-            if let last = lastEnd, s.startDate.timeIntervalSince(last) > sessionGap {
-                if !current.isEmpty { sessions.append(current) }
-                current = []
-            }
-            current.append(s)
-            lastEnd = s.endDate
+        let raw = await healthManager.fetchSleepSamples(from: queryStart, to: queryEnd)
+        let fetched = raw.filter {
+            $0.startDate >= rangeStart && $0.startDate < rangeEnd
         }
-        if !current.isEmpty { sessions.append(current) }
-        return sessions
+        monthCache[key] = fetched
+        return fetched
+    }
+
+    // MARK: - 时间窗口
+
+    private func weekWindow(for anchor: Date) -> (Date, Date) {
+        let calendar = Calendar.current
+        let weekStart = calendar.dateInterval(of: .weekOfYear, for: anchor)!.start
+        let weekEnd = calendar.date(byAdding: .day, value: 6, to: weekStart)!
+        let (s, _) = SleepDay.window(for: weekStart)
+        let (_, e) = SleepDay.window(for: weekEnd)
+        return (s, e)
+    }
+
+    private func monthWindow(for anchor: Date) -> (Date, Date) {
+        let calendar = Calendar.current
+        let interval = calendar.dateInterval(of: .month, for: anchor)!
+        let monthStart = interval.start
+        let monthEnd = calendar.date(byAdding: .day, value: -1, to: interval.end)!
+        let (s, _) = SleepDay.window(for: monthStart)
+        let (_, e) = SleepDay.window(for: monthEnd)
+        return (s, e)
     }
 
     // MARK: - 聚合
 
     private func dailyTotals(from samples: [HKCategorySample], range: SleepRange) -> [DailySleepTotal] {
         let calendar = Calendar.current
-        let today = calendar.startOfDay(for: Date())
 
         var byDay: [Date: TimeInterval] = [:]
         for s in samples {
             guard let stage = HKCategoryValueSleepAnalysis(rawValue: s.value) else { continue }
             guard stage != .awake && stage != .inBed else { continue }
-            let day = calendar.startOfDay(for: s.endDate)
+            let day = SleepDay.day(for: s.startDate)
             byDay[day, default: 0] += s.endDate.timeIntervalSince(s.startDate)
         }
 
-        return (0...range.daysBack).reversed().map { offset in
-            let date = calendar.date(byAdding: .day, value: -offset, to: today)!
-            return DailySleepTotal(date: date, total: byDay[date] ?? 0)
+        let days: [Date]
+        switch range {
+        case .day:
+            days = [calendar.startOfDay(for: currentDay)]
+
+        case .week:
+            let weekStart = calendar.dateInterval(of: .weekOfYear, for: weekAnchor)!.start
+            days = (0..<7).map {
+                calendar.startOfDay(for: calendar.date(byAdding: .day, value: $0, to: weekStart)!)
+            }
+
+        case .month:
+            let interval = calendar.dateInterval(of: .month, for: monthAnchor)!
+            let dayCount = calendar.dateComponents([.day], from: interval.start, to: interval.end).day ?? 30
+            days = (0..<dayCount).map {
+                calendar.startOfDay(for: calendar.date(byAdding: .day, value: $0, to: interval.start)!)
+            }
+        }
+
+        return days.map { day in
+            DailySleepTotal(date: day, total: byDay[day] ?? 0)
         }
     }
 
@@ -434,21 +534,35 @@ struct SleepDetailView: View {
     }
 }
 
-// MARK: - 趋势柱状图（周 / 月共用）
+// MARK: - 趋势柱状图（周 / 月共用，支持点击选中）
 
 private struct SleepTrendChart: View {
     let data: [DailySleepTotal]
     let range: SleepRange
+    @Binding var selection: Date?
+
+    private var selectedItem: DailySleepTotal? {
+        guard let selection else { return nil }
+        let nearest = data.min {
+            abs($0.date.timeIntervalSince(selection)) < abs($1.date.timeIntervalSince(selection))
+        }
+        guard let nearest else { return nil }
+        if abs(nearest.date.timeIntervalSince(selection)) > 12 * 3600 { return nil }
+        return nearest
+    }
 
     var body: some View {
-        Chart(data) { item in
-            BarMark(
-                x: .value("日期", item.date, unit: .day),
-                y: .value("小时", item.total / 3600)
-            )
-            .foregroundStyle(Color.indigo.gradient)
-            .cornerRadius(4)
+        Chart {
+            ForEach(data) { item in
+                BarMark(
+                    x: .value("日期", item.date, unit: .day),
+                    y: .value("小时", item.total / 3600)
+                )
+                .foregroundStyle(barColor(item))
+                .cornerRadius(4)
+            }
         }
+        .chartXSelection(value: $selection)
         .chartXAxis {
             AxisMarks(values: xStride) { value in
                 AxisValueLabel {
@@ -472,6 +586,56 @@ private struct SleepTrendChart: View {
                 }
             }
         }
+        .overlay(alignment: .top) {
+            if let item = selectedItem {
+                bubble(item)
+                    .padding(.top, 2)
+                    .transition(.opacity.combined(with: .scale(scale: 0.95)))
+            }
+        }
+        .animation(.smooth(duration: 0.18), value: selectedItem?.id)
+    }
+
+    private func barColor(_ item: DailySleepTotal) -> Color {
+        if let selected = selectedItem, selected.id == item.id {
+            return .indigo
+        }
+        return Color.indigo.opacity(0.45)
+    }
+
+    private func bubble(_ item: DailySleepTotal) -> some View {
+        HStack(spacing: 5) {
+            Text(shortDate(item.date))
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.primary)
+
+            Text("·")
+                .foregroundStyle(.tertiary)
+
+            Text(formatHM(item.total))
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.secondary)
+                .monospacedDigit()
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 5)
+        .background(Capsule().fill(.regularMaterial))
+        .overlay(Capsule().stroke(Color.primary.opacity(0.08), lineWidth: 1))
+    }
+
+    private func shortDate(_ date: Date) -> String {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "zh_CN")
+        f.dateFormat = "M月d日 EEE"
+        return f.string(from: date)
+    }
+
+    private func formatHM(_ t: TimeInterval) -> String {
+        guard t > 0 else { return "无数据" }
+        let totalMinutes = Int(t / 60)
+        let h = totalMinutes / 60
+        let m = totalMinutes % 60
+        return h > 0 ? "\(h)小时\(m)分" : "\(m)分"
     }
 
     private var xStride: AxisMarkValues {

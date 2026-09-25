@@ -3,12 +3,35 @@
 //  iHealth
 //
 //  HealthKit 数据管理器（单例）。
-//  负责请求活动摘要、睡眠、生命体征数据的读取权限，
-//  查询今日相关数据供健康页面展示。
+//  与苹果健康保持一致的睡眠查询：按「睡眠日」18:00–18:00 归属。
 //
 
 import HealthKit
 import Observation
+
+// MARK: - 睡眠日工具（与苹果健康口径一致）
+
+enum SleepDay {
+    /// 一天对应的「睡眠日」窗口：[前一天 18:00, 当天 18:00]
+    static func window(for date: Date) -> (start: Date, end: Date) {
+        let calendar = Calendar.current
+        let dayStart = calendar.startOfDay(for: date)
+        let start = calendar.date(byAdding: .hour, value: -6, to: dayStart)!   // 前一天 18:00
+        let end   = calendar.date(byAdding: .hour, value: 18, to: dayStart)!   // 当天 18:00
+        return (start, end)
+    }
+
+    /// 给定一个时刻，返回它所属「睡眠日」的当天 0 点
+    /// 18:00 之后算作次日，18:00 之前算作当日
+    static func day(for date: Date) -> Date {
+        let calendar = Calendar.current
+        let dayStart = calendar.startOfDay(for: date)
+        let hour = calendar.component(.hour, from: date)
+        return hour >= 18
+            ? calendar.date(byAdding: .day, value: 1, to: dayStart)!
+            : dayStart
+    }
+}
 
 @MainActor
 @Observable
@@ -28,10 +51,10 @@ final class HealthManager {
     // MARK: - 生命体征数据结构
 
     struct VitalsData {
-        var heartRate: Double?          // 心率（次/分）
-        var respiratoryRate: Double?    // 呼吸频率（次/分）
-        var wristTemperature: Double?   // 手腕温度（°C）
-        var bloodOxygen: Double?        // 血氧（%）
+        var heartRate: Double?
+        var respiratoryRate: Double?
+        var wristTemperature: Double?
+        var bloodOxygen: Double?
     }
 
     // MARK: - 授权
@@ -104,15 +127,15 @@ final class HealthManager {
 
     // MARK: - 睡眠数据
 
-    /// 今日睡眠数据（供健康首页使用）
+    /// 今日（按「睡眠日」口径）的睡眠数据
     func fetchTodaySleepData() async {
-        let calendar = Calendar.current
-        let startDate = calendar.startOfDay(for: Date())
-        let endDate = calendar.date(byAdding: .day, value: 1, to: startDate)!
-        sleepSamples = await fetchSleepSamples(from: startDate, to: endDate)
+        let (start, end) = SleepDay.window(for: Date())
+        let raw = await fetchSleepSamples(from: start, to: end)
+        // 只保留「开始时间」落在睡眠日窗口内的样本
+        sleepSamples = raw.filter { $0.startDate >= start && $0.startDate < end }
     }
 
-    /// 通用查询：获取指定时间范围内的睡眠样本（已排除“在床上”）
+    /// 通用查询：取指定时间范围内所有睡眠样本（保留 asleep* 与 awake，排除 inBed）
     func fetchSleepSamples(from startDate: Date, to endDate: Date) async -> [HKCategorySample] {
         let sleepType = HKCategoryType(.sleepAnalysis)
         let datePredicate = HKQuery.predicateForSamples(withStart: startDate, end: endDate)
@@ -125,6 +148,7 @@ final class HealthManager {
         do {
             let allSamples = try await descriptor.result(for: healthStore)
             return allSamples.filter { sample in
+                // 排除「在床上」；保留所有睡眠阶段（含 asleepUnspecified）与 awake
                 sample.value != HKCategoryValueSleepAnalysis.inBed.rawValue
             }
         } catch {
@@ -176,11 +200,9 @@ final class HealthManager {
         }
 
         var value = quantity.doubleValue(for: unit)
-
         if identifier == .oxygenSaturation && value <= 1.0 {
             value *= 100
         }
-
         return value
     }
 }
