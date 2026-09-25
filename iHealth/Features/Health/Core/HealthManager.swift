@@ -60,6 +60,8 @@ enum SleepDay {
     }
 }
 
+// MARK: - HealthManager
+
 @MainActor
 @Observable
 final class HealthManager {
@@ -107,31 +109,19 @@ final class HealthManager {
             HKObjectType.quantityType(forIdentifier: .stepCount)!
         ]
 
-        // 日照时间（Time in Daylight）
-        if let daylightType = HKQuantityType.quantityType(forIdentifier: .timeInDaylight) {
-            typesToRead.insert(daylightType)
+        let optionalIdentifiers: [HKQuantityTypeIdentifier] = [
+            .timeInDaylight,
+            .basalEnergyBurned,
+            .activeEnergyBurned,
+            .restingHeartRate,
+            .heartRateVariabilitySDNN
+        ]
+        for id in optionalIdentifiers {
+            if let type = HKQuantityType.quantityType(forIdentifier: id) {
+                typesToRead.insert(type)
+            }
         }
 
-        // 基础代谢（Basal Energy Burned）
-        if let basalType = HKQuantityType.quantityType(forIdentifier: .basalEnergyBurned) {
-            typesToRead.insert(basalType)
-        }
-
-        // 活动消耗（Active Energy Burned）
-        if let activeType = HKQuantityType.quantityType(forIdentifier: .activeEnergyBurned) {
-            typesToRead.insert(activeType)
-        }
-        
-        // 静息心率
-        if let restingType = HKQuantityType.quantityType(forIdentifier: .restingHeartRate) {
-            typesToRead.insert(restingType)
-        }
-
-        // 心率变异性
-        if let hrvType = HKQuantityType.quantityType(forIdentifier: .heartRateVariabilitySDNN) {
-            typesToRead.insert(hrvType)
-        }
-        
         for kind in VitalKind.allCases {
             if let type = HKQuantityType.quantityType(forIdentifier: kind.identifier) {
                 typesToRead.insert(type)
@@ -162,22 +152,14 @@ final class HealthManager {
         do {
             let summaries: [HKActivitySummary] = try await withCheckedThrowingContinuation { cont in
                 let query = HKActivitySummaryQuery(predicate: predicate) { _, summaries, error in
-                    if let error {
-                        cont.resume(throwing: error)
-                    } else {
-                        cont.resume(returning: summaries ?? [])
-                    }
+                    if let error { cont.resume(throwing: error) }
+                    else { cont.resume(returning: summaries ?? []) }
                 }
                 healthStore.execute(query)
             }
-            if activitySummary?.activeEnergyBurned != summaries.first?.activeEnergyBurned
-                || activitySummary?.appleExerciseTime != summaries.first?.appleExerciseTime
-                || activitySummary?.appleStandHours != summaries.first?.appleStandHours {
-                activitySummary = summaries.first
-            }
+            activitySummary = summaries.first
         } catch {
             AppLogError("查询活动摘要失败: \(error)")
-            if activitySummary == nil { activitySummary = nil }
         }
     }
 
@@ -203,9 +185,7 @@ final class HealthManager {
 
         do {
             let allSamples = try await descriptor.result(for: healthStore)
-            return allSamples.filter { sample in
-                sample.value != HKCategoryValueSleepAnalysis.inBed.rawValue
-            }
+            return allSamples.filter { $0.value != HKCategoryValueSleepAnalysis.inBed.rawValue }
         } catch {
             AppLogError("查询睡眠数据失败: \(error)")
             return []
@@ -252,9 +232,8 @@ final class HealthManager {
         }
     }
 
-    // MARK: - 步数
+    // MARK: - 步数（累计）
 
-    /// 查询指定时间范围内的累计步数
     func fetchStepCount(from startDate: Date, to endDate: Date) async -> Double {
         guard let type = HKQuantityType.quantityType(forIdentifier: .stepCount) else { return 0 }
         let predicate = HKQuery.predicateForSamples(withStart: startDate, end: endDate)
@@ -273,97 +252,6 @@ final class HealthManager {
         }
     }
 
-    /// 指定日期按小时分组的步数。
-    /// - 今天：从 0 点到当前小时
-    /// - 历史某天：0–23 完整返回，缺失小时补 0
-    func fetchHourlySteps(for day: Date) async -> [HourlySteps] {
-        let calendar = Calendar.current
-        let start = calendar.startOfDay(for: day)
-        let now = Date()
-        let isToday = calendar.isDateInToday(day)
-
-        let end: Date
-        let maxHour: Int
-        if isToday {
-            end = now
-            maxHour = calendar.component(.hour, from: now)
-        } else {
-            end = calendar.date(byAdding: .day, value: 1, to: start)!
-            maxHour = 23
-        }
-
-        guard let type = HKQuantityType.quantityType(forIdentifier: .stepCount) else { return [] }
-        let predicate = HKQuery.predicateForSamples(withStart: start, end: end)
-
-        let descriptor = HKStatisticsCollectionQueryDescriptor(
-            predicate: .quantitySample(type: type, predicate: predicate),
-            options: .cumulativeSum,
-            anchorDate: start,
-            intervalComponents: DateComponents(hour: 1)
-        )
-
-        do {
-            let collection = try await descriptor.result(for: healthStore)
-
-            var byHour: [Int: Double] = [:]
-            collection.enumerateStatistics(from: start, to: end) { statistics, _ in
-                let hour = calendar.component(.hour, from: statistics.startDate)
-                byHour[hour] = statistics.sumQuantity()?.doubleValue(for: .count()) ?? 0
-            }
-
-            return (0...maxHour).map { hour in
-                HourlySteps(hour: hour, steps: byHour[hour] ?? 0)
-            }
-        } catch {
-            AppLogError("查询每小时步数失败: \(error)")
-            return []
-        }
-    }
-
-    /// 今日每小时步数（0 点至当前小时）
-    func fetchTodayHourlySteps() async -> [HourlySteps] {
-        await fetchHourlySteps(for: Date())
-    }
-
-    /// 指定日期区间按天分组的步数，返回从 start 到 end 前一天的完整序列。
-    func fetchDailySteps(from startDate: Date, to endDate: Date) async -> [DailySteps] {
-        let calendar = Calendar.current
-        let start = calendar.startOfDay(for: startDate)
-
-        guard let type = HKQuantityType.quantityType(forIdentifier: .stepCount) else { return [] }
-        let predicate = HKQuery.predicateForSamples(withStart: start, end: endDate)
-
-        let descriptor = HKStatisticsCollectionQueryDescriptor(
-            predicate: .quantitySample(type: type, predicate: predicate),
-            options: .cumulativeSum,
-            anchorDate: start,
-            intervalComponents: DateComponents(day: 1)
-        )
-
-        do {
-            let collection = try await descriptor.result(for: healthStore)
-
-            var byDay: [Date: Double] = [:]
-            collection.enumerateStatistics(from: start, to: endDate) { statistics, _ in
-                let day = calendar.startOfDay(for: statistics.startDate)
-                byDay[day] = statistics.sumQuantity()?.doubleValue(for: .count()) ?? 0
-            }
-
-            var days: [DailySteps] = []
-            var current = start
-            while current < endDate {
-                days.append(DailySteps(date: current, steps: byDay[current] ?? 0))
-                guard let next = calendar.date(byAdding: .day, value: 1, to: current) else { break }
-                current = next
-            }
-            return days
-        } catch {
-            AppLogError("查询每日步数失败: \(error)")
-            return []
-        }
-    }
-
-    /// 某一小时内的原始步数样本（用于小时详情页）
     func fetchStepSamples(from startDate: Date, to endDate: Date) async -> [VitalSample] {
         await fetchVitalSamples(
             identifier: .stepCount,
@@ -372,649 +260,331 @@ final class HealthManager {
             to: endDate
         )
     }
+}
 
-    // MARK: - 日照
+// MARK: - 通用查询引擎
 
-    /// 指定日期按小时分组的日照时长（分钟）。
-    /// - 今天：从 0 点到当前小时
-    /// - 历史某天：0–23 完整返回，缺失小时补 0
-    func fetchHourlyDaylight(for day: Date) async -> [HourlyDaylight] {
+extension HealthManager {
+
+    /// 计算一天内按小时聚合的时间窗口。
+    /// - 今天：0 点到当前小时
+    /// - 历史某天：完整 0–23
+    struct HourlyWindow {
+        let start: Date
+        let end: Date
+        let maxHour: Int
+    }
+
+    func hourlyWindow(for day: Date) -> HourlyWindow {
         let calendar = Calendar.current
         let start = calendar.startOfDay(for: day)
         let now = Date()
-        let isToday = calendar.isDateInToday(day)
-
-        let end: Date
-        let maxHour: Int
-        if isToday {
-            end = now
-            maxHour = calendar.component(.hour, from: now)
+        if calendar.isDateInToday(day) {
+            return HourlyWindow(start: start, end: now,
+                                maxHour: calendar.component(.hour, from: now))
         } else {
-            end = calendar.date(byAdding: .day, value: 1, to: start)!
-            maxHour = 23
-        }
-
-        guard let type = HKQuantityType.quantityType(forIdentifier: .timeInDaylight) else { return [] }
-        let predicate = HKQuery.predicateForSamples(withStart: start, end: end)
-
-        let descriptor = HKStatisticsCollectionQueryDescriptor(
-            predicate: .quantitySample(type: type, predicate: predicate),
-            options: .cumulativeSum,
-            anchorDate: start,
-            intervalComponents: DateComponents(hour: 1)
-        )
-
-        do {
-            let collection = try await descriptor.result(for: healthStore)
-
-            var byHour: [Int: Double] = [:]
-            collection.enumerateStatistics(from: start, to: end) { statistics, _ in
-                let hour = calendar.component(.hour, from: statistics.startDate)
-                byHour[hour] = statistics.sumQuantity()?.doubleValue(for: .minute()) ?? 0
-            }
-
-            return (0...maxHour).map { hour in
-                HourlyDaylight(hour: hour, minutes: byHour[hour] ?? 0)
-            }
-        } catch {
-            AppLogError("查询每小时日照失败: \(error)")
-            return []
+            return HourlyWindow(
+                start: start,
+                end: calendar.date(byAdding: .day, value: 1, to: start)!,
+                maxHour: 23
+            )
         }
     }
 
-    /// 今日每小时日照（0 点至当前小时）
+    /// 按小时分桶的通用查询。
+    /// - `transform`：对每个原始值做额外处理（例如血氧 0–1 → 0–100）
+    func fetchHourlyBuckets(
+        identifier: HKQuantityTypeIdentifier,
+        unit: HKUnit,
+        options: HKStatisticsOptions,
+        for day: Date,
+        transform: @escaping (Double) -> Double = { $0 }
+    ) async -> (values: [Int: Double], window: HourlyWindow) {
+        let window = hourlyWindow(for: day)
+        guard let type = HKQuantityType.quantityType(forIdentifier: identifier) else {
+            return ([:], window)
+        }
+        let predicate = HKQuery.predicateForSamples(withStart: window.start, end: window.end)
+        let descriptor = HKStatisticsCollectionQueryDescriptor(
+            predicate: .quantitySample(type: type, predicate: predicate),
+            options: options,
+            anchorDate: window.start,
+            intervalComponents: DateComponents(hour: 1)
+        )
+        let calendar = Calendar.current
+        do {
+            let collection = try await descriptor.result(for: healthStore)
+            var byHour: [Int: Double] = [:]
+            collection.enumerateStatistics(from: window.start, to: window.end) { stats, _ in
+                let hour = calendar.component(.hour, from: stats.startDate)
+                let q = options.contains(.cumulativeSum)
+                    ? stats.sumQuantity()
+                    : stats.averageQuantity()
+                if let q { byHour[hour] = transform(q.doubleValue(for: unit)) }
+            }
+            return (byHour, window)
+        } catch {
+            AppLogError("查询每小时统计失败: \(error)")
+            return ([:], window)
+        }
+    }
+
+    /// 按天分桶的通用查询。
+    func fetchDailyBuckets(
+        identifier: HKQuantityTypeIdentifier,
+        unit: HKUnit,
+        options: HKStatisticsOptions,
+        from startDate: Date,
+        to endDate: Date,
+        transform: @escaping (Double) -> Double = { $0 }
+    ) async -> [Date: Double] {
+        let calendar = Calendar.current
+        let start = calendar.startOfDay(for: startDate)
+        guard let type = HKQuantityType.quantityType(forIdentifier: identifier) else { return [:] }
+        let predicate = HKQuery.predicateForSamples(withStart: start, end: endDate)
+        let descriptor = HKStatisticsCollectionQueryDescriptor(
+            predicate: .quantitySample(type: type, predicate: predicate),
+            options: options,
+            anchorDate: start,
+            intervalComponents: DateComponents(day: 1)
+        )
+        do {
+            let collection = try await descriptor.result(for: healthStore)
+            var byDay: [Date: Double] = [:]
+            collection.enumerateStatistics(from: start, to: endDate) { stats, _ in
+                let day = calendar.startOfDay(for: stats.startDate)
+                let q = options.contains(.cumulativeSum)
+                    ? stats.sumQuantity()
+                    : stats.averageQuantity()
+                if let q { byDay[day] = transform(q.doubleValue(for: unit)) }
+            }
+            return byDay
+        } catch {
+            AppLogError("查询每日统计失败: \(error)")
+            return [:]
+        }
+    }
+
+    /// 把 `[Date: Double]` 展开为按天连续序列，缺失天通过 `build` 决定如何填充。
+    func expandDailySeries<Item: Identifiable>(
+        _ byDay: [Date: Double],
+        from startDate: Date,
+        to endDate: Date,
+        build: (Date, Double?) -> Item
+    ) -> [Item] {
+        let calendar = Calendar.current
+        var result: [Item] = []
+        var current = calendar.startOfDay(for: startDate)
+        while current < endDate {
+            result.append(build(current, byDay[current]))
+            guard let next = calendar.date(byAdding: .day, value: 1, to: current) else { break }
+            current = next
+        }
+        return result
+    }
+}
+
+// MARK: - 各指标 API（薄包装）
+
+extension HealthManager {
+
+    // MARK: 步数
+
+    func fetchHourlySteps(for day: Date) async -> [HourlySteps] {
+        let (byHour, window) = await fetchHourlyBuckets(
+            identifier: .stepCount, unit: .count(),
+            options: .cumulativeSum, for: day
+        )
+        return (0...window.maxHour).map { HourlySteps(hour: $0, steps: byHour[$0] ?? 0) }
+    }
+
+    func fetchTodayHourlySteps() async -> [HourlySteps] {
+        await fetchHourlySteps(for: Date())
+    }
+
+    func fetchDailySteps(from startDate: Date, to endDate: Date) async -> [DailySteps] {
+        let byDay = await fetchDailyBuckets(
+            identifier: .stepCount, unit: .count(),
+            options: .cumulativeSum, from: startDate, to: endDate
+        )
+        return expandDailySeries(byDay, from: startDate, to: endDate) {
+            DailySteps(date: $0, steps: $1 ?? 0)
+        }
+    }
+
+    // MARK: 日照
+
+    func fetchHourlyDaylight(for day: Date) async -> [HourlyDaylight] {
+        let (byHour, window) = await fetchHourlyBuckets(
+            identifier: .timeInDaylight, unit: .minute(),
+            options: .cumulativeSum, for: day
+        )
+        return (0...window.maxHour).map { HourlyDaylight(hour: $0, minutes: byHour[$0] ?? 0) }
+    }
+
     func fetchTodayHourlyDaylight() async -> [HourlyDaylight] {
         await fetchHourlyDaylight(for: Date())
     }
 
-    /// 指定日期区间按天分组的日照时长（分钟）
     func fetchDailyDaylight(from startDate: Date, to endDate: Date) async -> [DailyDaylight] {
-        let calendar = Calendar.current
-        let start = calendar.startOfDay(for: startDate)
-
-        guard let type = HKQuantityType.quantityType(forIdentifier: .timeInDaylight) else { return [] }
-        let predicate = HKQuery.predicateForSamples(withStart: start, end: endDate)
-
-        let descriptor = HKStatisticsCollectionQueryDescriptor(
-            predicate: .quantitySample(type: type, predicate: predicate),
-            options: .cumulativeSum,
-            anchorDate: start,
-            intervalComponents: DateComponents(day: 1)
+        let byDay = await fetchDailyBuckets(
+            identifier: .timeInDaylight, unit: .minute(),
+            options: .cumulativeSum, from: startDate, to: endDate
         )
-
-        do {
-            let collection = try await descriptor.result(for: healthStore)
-
-            var byDay: [Date: Double] = [:]
-            collection.enumerateStatistics(from: start, to: endDate) { statistics, _ in
-                let day = calendar.startOfDay(for: statistics.startDate)
-                byDay[day] = statistics.sumQuantity()?.doubleValue(for: .minute()) ?? 0
-            }
-
-            var days: [DailyDaylight] = []
-            var current = start
-            while current < endDate {
-                days.append(DailyDaylight(date: current, minutes: byDay[current] ?? 0))
-                guard let next = calendar.date(byAdding: .day, value: 1, to: current) else { break }
-                current = next
-            }
-            return days
-        } catch {
-            AppLogError("查询每日日照失败: \(error)")
-            return []
+        return expandDailySeries(byDay, from: startDate, to: endDate) {
+            DailyDaylight(date: $0, minutes: $1 ?? 0)
         }
     }
-    
-    // MARK: - 基础代谢
 
-    /// 指定日期按小时分组的基础代谢（大卡）。
-    /// - 今天：从 0 点到当前小时
-    /// - 历史某天：0–23 完整返回，缺失小时补 0
+    // MARK: 基础代谢
+
     func fetchHourlyBasalEnergy(for day: Date) async -> [HourlyBasalEnergy] {
-        let calendar = Calendar.current
-        let start = calendar.startOfDay(for: day)
-        let now = Date()
-        let isToday = calendar.isDateInToday(day)
-
-        let end: Date
-        let maxHour: Int
-        if isToday {
-            end = now
-            maxHour = calendar.component(.hour, from: now)
-        } else {
-            end = calendar.date(byAdding: .day, value: 1, to: start)!
-            maxHour = 23
-        }
-
-        guard let type = HKQuantityType.quantityType(forIdentifier: .basalEnergyBurned) else { return [] }
-        let predicate = HKQuery.predicateForSamples(withStart: start, end: end)
-
-        let descriptor = HKStatisticsCollectionQueryDescriptor(
-            predicate: .quantitySample(type: type, predicate: predicate),
-            options: .cumulativeSum,
-            anchorDate: start,
-            intervalComponents: DateComponents(hour: 1)
+        let (byHour, window) = await fetchHourlyBuckets(
+            identifier: .basalEnergyBurned, unit: .kilocalorie(),
+            options: .cumulativeSum, for: day
         )
-
-        do {
-            let collection = try await descriptor.result(for: healthStore)
-
-            var byHour: [Int: Double] = [:]
-            collection.enumerateStatistics(from: start, to: end) { statistics, _ in
-                let hour = calendar.component(.hour, from: statistics.startDate)
-                byHour[hour] = statistics.sumQuantity()?.doubleValue(for: .kilocalorie()) ?? 0
-            }
-
-            return (0...maxHour).map { hour in
-                HourlyBasalEnergy(hour: hour, kilocalories: byHour[hour] ?? 0)
-            }
-        } catch {
-            AppLogError("查询每小时基础代谢失败: \(error)")
-            return []
-        }
+        return (0...window.maxHour).map { HourlyBasalEnergy(hour: $0, kilocalories: byHour[$0] ?? 0) }
     }
 
-    /// 今日每小时基础代谢（0 点至当前小时）
     func fetchTodayHourlyBasalEnergy() async -> [HourlyBasalEnergy] {
         await fetchHourlyBasalEnergy(for: Date())
     }
 
-    /// 指定日期区间按天分组的基础代谢（大卡）
     func fetchDailyBasalEnergy(from startDate: Date, to endDate: Date) async -> [DailyBasalEnergy] {
-        let calendar = Calendar.current
-        let start = calendar.startOfDay(for: startDate)
-
-        guard let type = HKQuantityType.quantityType(forIdentifier: .basalEnergyBurned) else { return [] }
-        let predicate = HKQuery.predicateForSamples(withStart: start, end: endDate)
-
-        let descriptor = HKStatisticsCollectionQueryDescriptor(
-            predicate: .quantitySample(type: type, predicate: predicate),
-            options: .cumulativeSum,
-            anchorDate: start,
-            intervalComponents: DateComponents(day: 1)
+        let byDay = await fetchDailyBuckets(
+            identifier: .basalEnergyBurned, unit: .kilocalorie(),
+            options: .cumulativeSum, from: startDate, to: endDate
         )
-
-        do {
-            let collection = try await descriptor.result(for: healthStore)
-
-            var byDay: [Date: Double] = [:]
-            collection.enumerateStatistics(from: start, to: endDate) { statistics, _ in
-                let day = calendar.startOfDay(for: statistics.startDate)
-                byDay[day] = statistics.sumQuantity()?.doubleValue(for: .kilocalorie()) ?? 0
-            }
-
-            var days: [DailyBasalEnergy] = []
-            var current = start
-            while current < endDate {
-                days.append(DailyBasalEnergy(date: current, kilocalories: byDay[current] ?? 0))
-                guard let next = calendar.date(byAdding: .day, value: 1, to: current) else { break }
-                current = next
-            }
-            return days
-        } catch {
-            AppLogError("查询每日基础代谢失败: \(error)")
-            return []
+        return expandDailySeries(byDay, from: startDate, to: endDate) {
+            DailyBasalEnergy(date: $0, kilocalories: $1 ?? 0)
         }
     }
-    
-    // MARK: - 活动消耗
 
-    /// 指定日期按小时分组的活动消耗（大卡）。
-    /// - 今天：从 0 点到当前小时
-    /// - 历史某天：0–23 完整返回，缺失小时补 0
+    // MARK: 活动消耗
+
     func fetchHourlyActiveEnergy(for day: Date) async -> [HourlyActiveEnergy] {
-        let calendar = Calendar.current
-        let start = calendar.startOfDay(for: day)
-        let now = Date()
-        let isToday = calendar.isDateInToday(day)
-
-        let end: Date
-        let maxHour: Int
-        if isToday {
-            end = now
-            maxHour = calendar.component(.hour, from: now)
-        } else {
-            end = calendar.date(byAdding: .day, value: 1, to: start)!
-            maxHour = 23
-        }
-
-        guard let type = HKQuantityType.quantityType(forIdentifier: .activeEnergyBurned) else { return [] }
-        let predicate = HKQuery.predicateForSamples(withStart: start, end: end)
-
-        let descriptor = HKStatisticsCollectionQueryDescriptor(
-            predicate: .quantitySample(type: type, predicate: predicate),
-            options: .cumulativeSum,
-            anchorDate: start,
-            intervalComponents: DateComponents(hour: 1)
+        let (byHour, window) = await fetchHourlyBuckets(
+            identifier: .activeEnergyBurned, unit: .kilocalorie(),
+            options: .cumulativeSum, for: day
         )
-
-        do {
-            let collection = try await descriptor.result(for: healthStore)
-
-            var byHour: [Int: Double] = [:]
-            collection.enumerateStatistics(from: start, to: end) { statistics, _ in
-                let hour = calendar.component(.hour, from: statistics.startDate)
-                byHour[hour] = statistics.sumQuantity()?.doubleValue(for: .kilocalorie()) ?? 0
-            }
-
-            return (0...maxHour).map { hour in
-                HourlyActiveEnergy(hour: hour, kilocalories: byHour[hour] ?? 0)
-            }
-        } catch {
-            AppLogError("查询每小时活动消耗失败: \(error)")
-            return []
-        }
+        return (0...window.maxHour).map { HourlyActiveEnergy(hour: $0, kilocalories: byHour[$0] ?? 0) }
     }
 
-    /// 今日每小时活动消耗（0 点至当前小时）
     func fetchTodayHourlyActiveEnergy() async -> [HourlyActiveEnergy] {
         await fetchHourlyActiveEnergy(for: Date())
     }
 
-    /// 指定日期区间按天分组的活动消耗（大卡）
     func fetchDailyActiveEnergy(from startDate: Date, to endDate: Date) async -> [DailyActiveEnergy] {
-        let calendar = Calendar.current
-        let start = calendar.startOfDay(for: startDate)
-
-        guard let type = HKQuantityType.quantityType(forIdentifier: .activeEnergyBurned) else { return [] }
-        let predicate = HKQuery.predicateForSamples(withStart: start, end: endDate)
-
-        let descriptor = HKStatisticsCollectionQueryDescriptor(
-            predicate: .quantitySample(type: type, predicate: predicate),
-            options: .cumulativeSum,
-            anchorDate: start,
-            intervalComponents: DateComponents(day: 1)
+        let byDay = await fetchDailyBuckets(
+            identifier: .activeEnergyBurned, unit: .kilocalorie(),
+            options: .cumulativeSum, from: startDate, to: endDate
         )
-
-        do {
-            let collection = try await descriptor.result(for: healthStore)
-
-            var byDay: [Date: Double] = [:]
-            collection.enumerateStatistics(from: start, to: endDate) { statistics, _ in
-                let day = calendar.startOfDay(for: statistics.startDate)
-                byDay[day] = statistics.sumQuantity()?.doubleValue(for: .kilocalorie()) ?? 0
-            }
-
-            var days: [DailyActiveEnergy] = []
-            var current = start
-            while current < endDate {
-                days.append(DailyActiveEnergy(date: current, kilocalories: byDay[current] ?? 0))
-                guard let next = calendar.date(byAdding: .day, value: 1, to: current) else { break }
-                current = next
-            }
-            return days
-        } catch {
-            AppLogError("查询每日活动消耗失败: \(error)")
-            return []
+        return expandDailySeries(byDay, from: startDate, to: endDate) {
+            DailyActiveEnergy(date: $0, kilocalories: $1 ?? 0)
         }
     }
-    
-    // MARK: - 心率（每小时 / 每日）
 
-    /// 指定日期按小时分组的心率（取平均，次/分）。无数据的小时为 nil。
+    // MARK: 心率
+
+    private var bpmUnit: HKUnit { HKUnit.count().unitDivided(by: .minute()) }
+
     func fetchHourlyHeartRate(for day: Date) async -> [HourlyHeartRate] {
-        let calendar = Calendar.current
-        let start = calendar.startOfDay(for: day)
-        let now = Date()
-        let isToday = calendar.isDateInToday(day)
-
-        let end: Date
-        let maxHour: Int
-        if isToday {
-            end = now
-            maxHour = calendar.component(.hour, from: now)
-        } else {
-            end = calendar.date(byAdding: .day, value: 1, to: start)!
-            maxHour = 23
-        }
-
-        guard let type = HKQuantityType.quantityType(forIdentifier: .heartRate) else { return [] }
-        let predicate = HKQuery.predicateForSamples(withStart: start, end: end)
-        let unit = HKUnit.count().unitDivided(by: .minute())
-
-        let descriptor = HKStatisticsCollectionQueryDescriptor(
-            predicate: .quantitySample(type: type, predicate: predicate),
-            options: .discreteAverage,
-            anchorDate: start,
-            intervalComponents: DateComponents(hour: 1)
+        let (byHour, window) = await fetchHourlyBuckets(
+            identifier: .heartRate, unit: bpmUnit,
+            options: .discreteAverage, for: day
         )
-
-        do {
-            let collection = try await descriptor.result(for: healthStore)
-            var byHour: [Int: Double] = [:]
-            collection.enumerateStatistics(from: start, to: end) { statistics, _ in
-                let hour = calendar.component(.hour, from: statistics.startDate)
-                if let avg = statistics.averageQuantity()?.doubleValue(for: unit) {
-                    byHour[hour] = avg
-                }
-            }
-            return (0...maxHour).map { hour in
-                HourlyHeartRate(hour: hour, bpm: byHour[hour])
-            }
-        } catch {
-            AppLogError("查询每小时心率失败: \(error)")
-            return []
-        }
+        return (0...window.maxHour).map { HourlyHeartRate(hour: $0, bpm: byHour[$0]) }
     }
 
-    /// 今日每小时心率
     func fetchTodayHourlyHeartRate() async -> [HourlyHeartRate] {
         await fetchHourlyHeartRate(for: Date())
     }
 
-    /// 指定日期区间按天分组的心率（取平均，次/分）。无数据的天为 nil。
     func fetchDailyHeartRate(from startDate: Date, to endDate: Date) async -> [DailyHeartRate] {
-        let calendar = Calendar.current
-        let start = calendar.startOfDay(for: startDate)
-
-        guard let type = HKQuantityType.quantityType(forIdentifier: .heartRate) else { return [] }
-        let predicate = HKQuery.predicateForSamples(withStart: start, end: endDate)
-        let unit = HKUnit.count().unitDivided(by: .minute())
-
-        let descriptor = HKStatisticsCollectionQueryDescriptor(
-            predicate: .quantitySample(type: type, predicate: predicate),
-            options: .discreteAverage,
-            anchorDate: start,
-            intervalComponents: DateComponents(day: 1)
+        let byDay = await fetchDailyBuckets(
+            identifier: .heartRate, unit: bpmUnit,
+            options: .discreteAverage, from: startDate, to: endDate
         )
-
-        do {
-            let collection = try await descriptor.result(for: healthStore)
-            var byDay: [Date: Double] = [:]
-            collection.enumerateStatistics(from: start, to: endDate) { statistics, _ in
-                let day = calendar.startOfDay(for: statistics.startDate)
-                if let avg = statistics.averageQuantity()?.doubleValue(for: unit) {
-                    byDay[day] = avg
-                }
-            }
-            var days: [DailyHeartRate] = []
-            var current = start
-            while current < endDate {
-                days.append(DailyHeartRate(date: current, bpm: byDay[current]))
-                guard let next = calendar.date(byAdding: .day, value: 1, to: current) else { break }
-                current = next
-            }
-            return days
-        } catch {
-            AppLogError("查询每日心率失败: \(error)")
-            return []
+        return expandDailySeries(byDay, from: startDate, to: endDate) {
+            DailyHeartRate(date: $0, bpm: $1)
         }
     }
 
-    // MARK: - 血氧（每小时 / 每日）
+    // MARK: 血氧
 
-    /// 指定日期按小时分组的血氧（取平均，0–100%）。无数据的小时为 nil。
+    private static let percentTransform: (Double) -> Double = { v in v <= 1.0 ? v * 100 : v }
+
     func fetchHourlyBloodOxygen(for day: Date) async -> [HourlyBloodOxygen] {
-        let calendar = Calendar.current
-        let start = calendar.startOfDay(for: day)
-        let now = Date()
-        let isToday = calendar.isDateInToday(day)
-
-        let end: Date
-        let maxHour: Int
-        if isToday {
-            end = now
-            maxHour = calendar.component(.hour, from: now)
-        } else {
-            end = calendar.date(byAdding: .day, value: 1, to: start)!
-            maxHour = 23
-        }
-
-        guard let type = HKQuantityType.quantityType(forIdentifier: .oxygenSaturation) else { return [] }
-        let predicate = HKQuery.predicateForSamples(withStart: start, end: end)
-
-        let descriptor = HKStatisticsCollectionQueryDescriptor(
-            predicate: .quantitySample(type: type, predicate: predicate),
-            options: .discreteAverage,
-            anchorDate: start,
-            intervalComponents: DateComponents(hour: 1)
+        let (byHour, window) = await fetchHourlyBuckets(
+            identifier: .oxygenSaturation, unit: .percent(),
+            options: .discreteAverage, for: day,
+            transform: Self.percentTransform
         )
-
-        do {
-            let collection = try await descriptor.result(for: healthStore)
-            var byHour: [Int: Double] = [:]
-            collection.enumerateStatistics(from: start, to: end) { statistics, _ in
-                let hour = calendar.component(.hour, from: statistics.startDate)
-                if var avg = statistics.averageQuantity()?.doubleValue(for: .percent()) {
-                    if avg <= 1.0 { avg *= 100 }
-                    byHour[hour] = avg
-                }
-            }
-            return (0...maxHour).map { hour in
-                HourlyBloodOxygen(hour: hour, percent: byHour[hour])
-            }
-        } catch {
-            AppLogError("查询每小时血氧失败: \(error)")
-            return []
-        }
+        return (0...window.maxHour).map { HourlyBloodOxygen(hour: $0, percent: byHour[$0]) }
     }
 
-    /// 今日每小时血氧
     func fetchTodayHourlyBloodOxygen() async -> [HourlyBloodOxygen] {
         await fetchHourlyBloodOxygen(for: Date())
     }
 
-    /// 指定日期区间按天分组的血氧（取平均，0–100%）。无数据的天为 nil。
     func fetchDailyBloodOxygen(from startDate: Date, to endDate: Date) async -> [DailyBloodOxygen] {
-        let calendar = Calendar.current
-        let start = calendar.startOfDay(for: startDate)
-
-        guard let type = HKQuantityType.quantityType(forIdentifier: .oxygenSaturation) else { return [] }
-        let predicate = HKQuery.predicateForSamples(withStart: start, end: endDate)
-
-        let descriptor = HKStatisticsCollectionQueryDescriptor(
-            predicate: .quantitySample(type: type, predicate: predicate),
-            options: .discreteAverage,
-            anchorDate: start,
-            intervalComponents: DateComponents(day: 1)
+        let byDay = await fetchDailyBuckets(
+            identifier: .oxygenSaturation, unit: .percent(),
+            options: .discreteAverage, from: startDate, to: endDate,
+            transform: Self.percentTransform
         )
-
-        do {
-            let collection = try await descriptor.result(for: healthStore)
-            var byDay: [Date: Double] = [:]
-            collection.enumerateStatistics(from: start, to: endDate) { statistics, _ in
-                let day = calendar.startOfDay(for: statistics.startDate)
-                if var avg = statistics.averageQuantity()?.doubleValue(for: .percent()) {
-                    if avg <= 1.0 { avg *= 100 }
-                    byDay[day] = avg
-                }
-            }
-            var days: [DailyBloodOxygen] = []
-            var current = start
-            while current < endDate {
-                days.append(DailyBloodOxygen(date: current, percent: byDay[current]))
-                guard let next = calendar.date(byAdding: .day, value: 1, to: current) else { break }
-                current = next
-            }
-            return days
-        } catch {
-            AppLogError("查询每日血氧失败: \(error)")
-            return []
+        return expandDailySeries(byDay, from: startDate, to: endDate) {
+            DailyBloodOxygen(date: $0, percent: $1)
         }
     }
-    
-    // MARK: - 静息心率（每小时 / 每日）
 
-    /// 指定日期按小时分组的静息心率。无数据的小时为 nil。
-    /// 注：静息心率通常每天只有一个值，所以大部分小时会是 nil。
+    // MARK: 静息心率
+
     func fetchHourlyRestingHeartRate(for day: Date) async -> [HourlyRestingHeartRate] {
-        let calendar = Calendar.current
-        let start = calendar.startOfDay(for: day)
-        let now = Date()
-        let isToday = calendar.isDateInToday(day)
-
-        let end: Date
-        let maxHour: Int
-        if isToday {
-            end = now
-            maxHour = calendar.component(.hour, from: now)
-        } else {
-            end = calendar.date(byAdding: .day, value: 1, to: start)!
-            maxHour = 23
-        }
-
-        guard let type = HKQuantityType.quantityType(forIdentifier: .restingHeartRate) else { return [] }
-        let predicate = HKQuery.predicateForSamples(withStart: start, end: end)
-        let unit = HKUnit.count().unitDivided(by: .minute())
-
-        let descriptor = HKStatisticsCollectionQueryDescriptor(
-            predicate: .quantitySample(type: type, predicate: predicate),
-            options: .discreteAverage,
-            anchorDate: start,
-            intervalComponents: DateComponents(hour: 1)
+        let (byHour, window) = await fetchHourlyBuckets(
+            identifier: .restingHeartRate, unit: bpmUnit,
+            options: .discreteAverage, for: day
         )
-
-        do {
-            let collection = try await descriptor.result(for: healthStore)
-            var byHour: [Int: Double] = [:]
-            collection.enumerateStatistics(from: start, to: end) { statistics, _ in
-                let hour = calendar.component(.hour, from: statistics.startDate)
-                if let avg = statistics.averageQuantity()?.doubleValue(for: unit) {
-                    byHour[hour] = avg
-                }
-            }
-            return (0...maxHour).map { hour in
-                HourlyRestingHeartRate(hour: hour, bpm: byHour[hour])
-            }
-        } catch {
-            AppLogError("查询每小时静息心率失败: \(error)")
-            return []
-        }
+        return (0...window.maxHour).map { HourlyRestingHeartRate(hour: $0, bpm: byHour[$0]) }
     }
 
-    /// 今日每小时静息心率
     func fetchTodayHourlyRestingHeartRate() async -> [HourlyRestingHeartRate] {
         await fetchHourlyRestingHeartRate(for: Date())
     }
 
-    /// 指定日期区间按天分组的静息心率。无数据的天为 nil。
     func fetchDailyRestingHeartRate(from startDate: Date, to endDate: Date) async -> [DailyRestingHeartRate] {
-        let calendar = Calendar.current
-        let start = calendar.startOfDay(for: startDate)
-
-        guard let type = HKQuantityType.quantityType(forIdentifier: .restingHeartRate) else { return [] }
-        let predicate = HKQuery.predicateForSamples(withStart: start, end: endDate)
-        let unit = HKUnit.count().unitDivided(by: .minute())
-
-        let descriptor = HKStatisticsCollectionQueryDescriptor(
-            predicate: .quantitySample(type: type, predicate: predicate),
-            options: .discreteAverage,
-            anchorDate: start,
-            intervalComponents: DateComponents(day: 1)
+        let byDay = await fetchDailyBuckets(
+            identifier: .restingHeartRate, unit: bpmUnit,
+            options: .discreteAverage, from: startDate, to: endDate
         )
-
-        do {
-            let collection = try await descriptor.result(for: healthStore)
-            var byDay: [Date: Double] = [:]
-            collection.enumerateStatistics(from: start, to: endDate) { statistics, _ in
-                let day = calendar.startOfDay(for: statistics.startDate)
-                if let avg = statistics.averageQuantity()?.doubleValue(for: unit) {
-                    byDay[day] = avg
-                }
-            }
-            var days: [DailyRestingHeartRate] = []
-            var current = start
-            while current < endDate {
-                days.append(DailyRestingHeartRate(date: current, bpm: byDay[current]))
-                guard let next = calendar.date(byAdding: .day, value: 1, to: current) else { break }
-                current = next
-            }
-            return days
-        } catch {
-            AppLogError("查询每日静息心率失败: \(error)")
-            return []
+        return expandDailySeries(byDay, from: startDate, to: endDate) {
+            DailyRestingHeartRate(date: $0, bpm: $1)
         }
     }
 
-    // MARK: - 心率变异性（每小时 / 每日）
+    // MARK: 心率变异性
 
-    /// 指定日期按小时分组的 HRV（SDNN，毫秒）。无数据的小时为 nil。
+    private var hrvUnit: HKUnit { HKUnit.secondUnit(with: .milli) }
+
     func fetchHourlyHeartRateVariability(for day: Date) async -> [HourlyHeartRateVariability] {
-        let calendar = Calendar.current
-        let start = calendar.startOfDay(for: day)
-        let now = Date()
-        let isToday = calendar.isDateInToday(day)
-
-        let end: Date
-        let maxHour: Int
-        if isToday {
-            end = now
-            maxHour = calendar.component(.hour, from: now)
-        } else {
-            end = calendar.date(byAdding: .day, value: 1, to: start)!
-            maxHour = 23
-        }
-
-        guard let type = HKQuantityType.quantityType(forIdentifier: .heartRateVariabilitySDNN) else { return [] }
-        let predicate = HKQuery.predicateForSamples(withStart: start, end: end)
-        let unit = HKUnit.secondUnit(with: .milli)
-
-        let descriptor = HKStatisticsCollectionQueryDescriptor(
-            predicate: .quantitySample(type: type, predicate: predicate),
-            options: .discreteAverage,
-            anchorDate: start,
-            intervalComponents: DateComponents(hour: 1)
+        let (byHour, window) = await fetchHourlyBuckets(
+            identifier: .heartRateVariabilitySDNN, unit: hrvUnit,
+            options: .discreteAverage, for: day
         )
-
-        do {
-            let collection = try await descriptor.result(for: healthStore)
-            var byHour: [Int: Double] = [:]
-            collection.enumerateStatistics(from: start, to: end) { statistics, _ in
-                let hour = calendar.component(.hour, from: statistics.startDate)
-                if let avg = statistics.averageQuantity()?.doubleValue(for: unit) {
-                    byHour[hour] = avg
-                }
-            }
-            return (0...maxHour).map { hour in
-                HourlyHeartRateVariability(hour: hour, milliseconds: byHour[hour])
-            }
-        } catch {
-            AppLogError("查询每小时 HRV 失败: \(error)")
-            return []
-        }
+        return (0...window.maxHour).map { HourlyHeartRateVariability(hour: $0, milliseconds: byHour[$0]) }
     }
 
-    /// 今日每小时 HRV
     func fetchTodayHourlyHeartRateVariability() async -> [HourlyHeartRateVariability] {
         await fetchHourlyHeartRateVariability(for: Date())
     }
 
-    /// 指定日期区间按天分组的 HRV（SDNN，毫秒）。无数据的天为 nil。
     func fetchDailyHeartRateVariability(from startDate: Date, to endDate: Date) async -> [DailyHeartRateVariability] {
-        let calendar = Calendar.current
-        let start = calendar.startOfDay(for: startDate)
-
-        guard let type = HKQuantityType.quantityType(forIdentifier: .heartRateVariabilitySDNN) else { return [] }
-        let predicate = HKQuery.predicateForSamples(withStart: start, end: endDate)
-        let unit = HKUnit.secondUnit(with: .milli)
-
-        let descriptor = HKStatisticsCollectionQueryDescriptor(
-            predicate: .quantitySample(type: type, predicate: predicate),
-            options: .discreteAverage,
-            anchorDate: start,
-            intervalComponents: DateComponents(day: 1)
+        let byDay = await fetchDailyBuckets(
+            identifier: .heartRateVariabilitySDNN, unit: hrvUnit,
+            options: .discreteAverage, from: startDate, to: endDate
         )
-
-        do {
-            let collection = try await descriptor.result(for: healthStore)
-            var byDay: [Date: Double] = [:]
-            collection.enumerateStatistics(from: start, to: endDate) { statistics, _ in
-                let day = calendar.startOfDay(for: statistics.startDate)
-                if let avg = statistics.averageQuantity()?.doubleValue(for: unit) {
-                    byDay[day] = avg
-                }
-            }
-            var days: [DailyHeartRateVariability] = []
-            var current = start
-            while current < endDate {
-                days.append(DailyHeartRateVariability(date: current, milliseconds: byDay[current]))
-                guard let next = calendar.date(byAdding: .day, value: 1, to: current) else { break }
-                current = next
-            }
-            return days
-        } catch {
-            AppLogError("查询每日 HRV 失败: \(error)")
-            return []
+        return expandDailySeries(byDay, from: startDate, to: endDate) {
+            DailyHeartRateVariability(date: $0, milliseconds: $1)
         }
     }
 }

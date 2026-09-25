@@ -105,25 +105,16 @@ struct HealthTabView: View {
         .task {
             await healthManager.requestAuthorization()
 
-            async let vitals = VitalsCalculator.shared.computeToday()
-            async let steps = healthManager.fetchTodayHourlySteps()
-            async let daylight = healthManager.fetchTodayHourlyDaylight()
-            async let basal = healthManager.fetchTodayHourlyBasalEnergy()
-            async let active = healthManager.fetchTodayHourlyActiveEnergy()
-            async let heartRate = healthManager.fetchTodayHourlyHeartRate()
-            async let bloodOxygen = healthManager.fetchTodayHourlyBloodOxygen()
-            async let restingHR = healthManager.fetchTodayHourlyRestingHeartRate()
-            async let hrv       = healthManager.fetchTodayHourlyHeartRateVariability()
-
-            todayVitals = await vitals
-            todayHourlySteps = await steps
-            todayHourlyDaylight = await daylight
-            todayHourlyBasalEnergy = await basal
-            todayHourlyActiveEnergy = await active
-            todayHourlyHeartRate = await heartRate
-            todayHourlyBloodOxygen = await bloodOxygen
-            todayHourlyRestingHeartRate = await restingHR
-            todayHourlyHRV              = await hrv
+            // 每个卡片独立并行加载，加载完即显示，不必等全部完成
+            Task { todayVitals                = await VitalsCalculator.shared.computeToday() }
+            Task { todayHourlySteps           = await healthManager.fetchTodayHourlySteps() }
+            Task { todayHourlyDaylight        = await healthManager.fetchTodayHourlyDaylight() }
+            Task { todayHourlyBasalEnergy     = await healthManager.fetchTodayHourlyBasalEnergy() }
+            Task { todayHourlyActiveEnergy    = await healthManager.fetchTodayHourlyActiveEnergy() }
+            Task { todayHourlyHeartRate       = await healthManager.fetchTodayHourlyHeartRate() }
+            Task { todayHourlyBloodOxygen     = await healthManager.fetchTodayHourlyBloodOxygen() }
+            Task { todayHourlyRestingHeartRate = await healthManager.fetchTodayHourlyRestingHeartRate() }
+            Task { todayHourlyHRV             = await healthManager.fetchTodayHourlyHeartRateVariability() }
         }
     }
 
