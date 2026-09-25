@@ -4,7 +4,7 @@
 //
 //  睡眠数据汇总视图。
 //  顶部：总睡眠时长（大字）
-//  中部：睡眠阶段图
+//  中部：入睡 / 醒来 时间 + 睡眠阶段图
 //  底部：深睡/浅睡/眼动/清醒 四项统计
 //
 
@@ -14,12 +14,15 @@ import HealthKit
 // MARK: - 睡眠阶段汇总
 
 struct SleepSummary {
-    let total: TimeInterval      // 睡眠总时长（所有 asleep 阶段之和）
-    let deep: TimeInterval       // 深睡
-    let core: TimeInterval       // 浅睡
-    let rem: TimeInterval        // 眼动（REM）
-    let unspecified: TimeInterval// 未分类睡眠
-    let awake: TimeInterval      // 清醒
+    let total: TimeInterval
+    let deep: TimeInterval
+    let core: TimeInterval
+    let rem: TimeInterval
+    let unspecified: TimeInterval
+    let awake: TimeInterval
+
+    let sleepStart: Date?
+    let sleepEnd: Date?
 
     init(samples: [HKCategorySample]) {
         var deep: TimeInterval = 0
@@ -27,6 +30,9 @@ struct SleepSummary {
         var rem: TimeInterval = 0
         var unspecified: TimeInterval = 0
         var awake: TimeInterval = 0
+
+        var firstStart: Date?
+        var lastEnd: Date?
 
         for s in samples {
             let d = s.endDate.timeIntervalSince(s.startDate)
@@ -38,6 +44,16 @@ struct SleepSummary {
             case .awake:             awake += d
             default:                 break
             }
+
+            if let v = HKCategoryValueSleepAnalysis(rawValue: s.value),
+               v != .awake, v != .inBed {
+                if firstStart == nil || s.startDate < firstStart! {
+                    firstStart = s.startDate
+                }
+                if lastEnd == nil || s.endDate > lastEnd! {
+                    lastEnd = s.endDate
+                }
+            }
         }
 
         self.deep = deep
@@ -46,6 +62,8 @@ struct SleepSummary {
         self.unspecified = unspecified
         self.awake = awake
         self.total = deep + core + rem + unspecified
+        self.sleepStart = firstStart
+        self.sleepEnd = lastEnd
     }
 }
 
@@ -57,26 +75,30 @@ struct SleepSummaryView: View {
     private var summary: SleepSummary { SleepSummary(samples: samples) }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 12) {
             // 总睡眠时长
             VStack(alignment: .leading, spacing: 2) {
                 Text("睡眠时间")
                     .font(.system(size: 13))
                     .foregroundStyle(.secondary)
 
-                HStack(alignment: .firstTextBaseline, spacing: 4) {
-                    Text(formatHourMinute(summary.total))
-                        .font(.system(size: 28, weight: .bold))
-                        .foregroundStyle(.primary)
-                        .monospacedDigit()
-                }
+                Text(formatHourMinute(summary.total))
+                    .font(.system(size: 28, weight: .bold, design: .rounded))
+                    .foregroundStyle(.primary)
+                    .monospacedDigit()
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.6)
             }
 
-            // 睡眠阶段图
-            SleepChartView(samples: samples)
-                .frame(height: 140)
+            // 入睡 / 醒来 + 阶段图
+            VStack(alignment: .leading, spacing: 6) {
+                sleepTimeRow
 
-            // 四项阶段统计（2×2 网格）
+                SleepChartView(samples: samples)
+                    .frame(height: 120)   // 更紧凑
+            }
+
+            // 四项阶段统计
             LazyVGrid(
                 columns: [
                     GridItem(.flexible(), alignment: .leading),
@@ -93,7 +115,35 @@ struct SleepSummaryView: View {
         }
     }
 
-    /// 格式化为「X小时Y分」
+    // MARK: - 入睡 / 醒来 时间行
+
+    @ViewBuilder
+    private var sleepTimeRow: some View {
+        if let start = summary.sleepStart, let end = summary.sleepEnd {
+            HStack(spacing: 6) {
+                Image(systemName: "moon.fill")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.indigo)
+
+                Text(start, format: .dateTime.hour().minute())
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.primary)
+                    .monospacedDigit()
+
+                Spacer(minLength: 4)
+
+                Image(systemName: "sun.horizon.fill")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.orange)
+
+                Text(end, format: .dateTime.hour().minute())
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.primary)
+                    .monospacedDigit()
+            }
+        }
+    }
+
     private func formatHourMinute(_ t: TimeInterval) -> String {
         guard t > 0 else { return "0分" }
         let totalMinutes = Int(t / 60)
@@ -129,7 +179,6 @@ struct SleepStageItem: View {
         }
     }
 
-    /// 紧凑格式：「1时12分」/「25分」
     private func format(_ t: TimeInterval) -> String {
         guard t > 0 else { return "0分" }
         let totalMinutes = Int(t / 60)

@@ -47,7 +47,6 @@ final class HealthManager {
             HKObjectType.categoryType(forIdentifier: .sleepAnalysis)!
         ]
 
-        // 生命体征相关类型
         let vitalsIdentifiers: [HKQuantityTypeIdentifier] = [
             .heartRate,
             .respiratoryRate,
@@ -64,7 +63,6 @@ final class HealthManager {
             try await healthStore.requestAuthorization(toShare: [], read: typesToRead)
             authorizationStatus = .sharingAuthorized
 
-            // 并行拉取三类数据
             async let summaryTask = fetchTodayActivitySummary()
             async let sleepTask = fetchTodaySleepData()
             async let vitalsTask = fetchTodayVitals()
@@ -106,11 +104,17 @@ final class HealthManager {
 
     // MARK: - 睡眠数据
 
+    /// 今日睡眠数据（供健康首页使用）
     func fetchTodaySleepData() async {
-        let sleepType = HKCategoryType(.sleepAnalysis)
         let calendar = Calendar.current
         let startDate = calendar.startOfDay(for: Date())
         let endDate = calendar.date(byAdding: .day, value: 1, to: startDate)!
+        sleepSamples = await fetchSleepSamples(from: startDate, to: endDate)
+    }
+
+    /// 通用查询：获取指定时间范围内的睡眠样本（已排除“在床上”）
+    func fetchSleepSamples(from startDate: Date, to endDate: Date) async -> [HKCategorySample] {
+        let sleepType = HKCategoryType(.sleepAnalysis)
         let datePredicate = HKQuery.predicateForSamples(withStart: startDate, end: endDate)
 
         let descriptor = HKSampleQueryDescriptor(
@@ -120,20 +124,18 @@ final class HealthManager {
 
         do {
             let allSamples = try await descriptor.result(for: healthStore)
-            // 排除“在床上”状态，保留清醒 + 所有睡眠阶段
-            sleepSamples = allSamples.filter { sample in
+            return allSamples.filter { sample in
                 sample.value != HKCategoryValueSleepAnalysis.inBed.rawValue
             }
         } catch {
             AppLogError("查询睡眠数据失败: \(error)")
-            sleepSamples = []
+            return []
         }
     }
 
     // MARK: - 生命体征
 
     func fetchTodayVitals() async {
-        // 查询范围：过去 16 小时（覆盖夜间睡眠时段）
         let endDate = Date()
         guard let startDate = Calendar.current.date(byAdding: .hour, value: -16, to: endDate) else {
             vitals = VitalsData()
@@ -156,7 +158,6 @@ final class HealthManager {
         )
     }
 
-    /// 通用查询：获取某类数据的平均值
     private func fetchAverage(
         _ identifier: HKQuantityTypeIdentifier,
         predicate: NSPredicate,
@@ -176,7 +177,6 @@ final class HealthManager {
 
         var value = quantity.doubleValue(for: unit)
 
-        // 血氧特殊处理：确保是 0-100 的百分比形式
         if identifier == .oxygenSaturation && value <= 1.0 {
             value *= 100
         }
