@@ -638,4 +638,188 @@ final class HealthManager {
             return []
         }
     }
+    
+    // MARK: - 心率（每小时 / 每日）
+
+    /// 指定日期按小时分组的心率（取平均，次/分）。无数据的小时为 nil。
+    func fetchHourlyHeartRate(for day: Date) async -> [HourlyHeartRate] {
+        let calendar = Calendar.current
+        let start = calendar.startOfDay(for: day)
+        let now = Date()
+        let isToday = calendar.isDateInToday(day)
+
+        let end: Date
+        let maxHour: Int
+        if isToday {
+            end = now
+            maxHour = calendar.component(.hour, from: now)
+        } else {
+            end = calendar.date(byAdding: .day, value: 1, to: start)!
+            maxHour = 23
+        }
+
+        guard let type = HKQuantityType.quantityType(forIdentifier: .heartRate) else { return [] }
+        let predicate = HKQuery.predicateForSamples(withStart: start, end: end)
+        let unit = HKUnit.count().unitDivided(by: .minute())
+
+        let descriptor = HKStatisticsCollectionQueryDescriptor(
+            predicate: .quantitySample(type: type, predicate: predicate),
+            options: .discreteAverage,
+            anchorDate: start,
+            intervalComponents: DateComponents(hour: 1)
+        )
+
+        do {
+            let collection = try await descriptor.result(for: healthStore)
+            var byHour: [Int: Double] = [:]
+            collection.enumerateStatistics(from: start, to: end) { statistics, _ in
+                let hour = calendar.component(.hour, from: statistics.startDate)
+                if let avg = statistics.averageQuantity()?.doubleValue(for: unit) {
+                    byHour[hour] = avg
+                }
+            }
+            return (0...maxHour).map { hour in
+                HourlyHeartRate(hour: hour, bpm: byHour[hour])
+            }
+        } catch {
+            AppLogError("查询每小时心率失败: \(error)")
+            return []
+        }
+    }
+
+    /// 今日每小时心率
+    func fetchTodayHourlyHeartRate() async -> [HourlyHeartRate] {
+        await fetchHourlyHeartRate(for: Date())
+    }
+
+    /// 指定日期区间按天分组的心率（取平均，次/分）。无数据的天为 nil。
+    func fetchDailyHeartRate(from startDate: Date, to endDate: Date) async -> [DailyHeartRate] {
+        let calendar = Calendar.current
+        let start = calendar.startOfDay(for: startDate)
+
+        guard let type = HKQuantityType.quantityType(forIdentifier: .heartRate) else { return [] }
+        let predicate = HKQuery.predicateForSamples(withStart: start, end: endDate)
+        let unit = HKUnit.count().unitDivided(by: .minute())
+
+        let descriptor = HKStatisticsCollectionQueryDescriptor(
+            predicate: .quantitySample(type: type, predicate: predicate),
+            options: .discreteAverage,
+            anchorDate: start,
+            intervalComponents: DateComponents(day: 1)
+        )
+
+        do {
+            let collection = try await descriptor.result(for: healthStore)
+            var byDay: [Date: Double] = [:]
+            collection.enumerateStatistics(from: start, to: endDate) { statistics, _ in
+                let day = calendar.startOfDay(for: statistics.startDate)
+                if let avg = statistics.averageQuantity()?.doubleValue(for: unit) {
+                    byDay[day] = avg
+                }
+            }
+            var days: [DailyHeartRate] = []
+            var current = start
+            while current < endDate {
+                days.append(DailyHeartRate(date: current, bpm: byDay[current]))
+                guard let next = calendar.date(byAdding: .day, value: 1, to: current) else { break }
+                current = next
+            }
+            return days
+        } catch {
+            AppLogError("查询每日心率失败: \(error)")
+            return []
+        }
+    }
+
+    // MARK: - 血氧（每小时 / 每日）
+
+    /// 指定日期按小时分组的血氧（取平均，0–100%）。无数据的小时为 nil。
+    func fetchHourlyBloodOxygen(for day: Date) async -> [HourlyBloodOxygen] {
+        let calendar = Calendar.current
+        let start = calendar.startOfDay(for: day)
+        let now = Date()
+        let isToday = calendar.isDateInToday(day)
+
+        let end: Date
+        let maxHour: Int
+        if isToday {
+            end = now
+            maxHour = calendar.component(.hour, from: now)
+        } else {
+            end = calendar.date(byAdding: .day, value: 1, to: start)!
+            maxHour = 23
+        }
+
+        guard let type = HKQuantityType.quantityType(forIdentifier: .oxygenSaturation) else { return [] }
+        let predicate = HKQuery.predicateForSamples(withStart: start, end: end)
+
+        let descriptor = HKStatisticsCollectionQueryDescriptor(
+            predicate: .quantitySample(type: type, predicate: predicate),
+            options: .discreteAverage,
+            anchorDate: start,
+            intervalComponents: DateComponents(hour: 1)
+        )
+
+        do {
+            let collection = try await descriptor.result(for: healthStore)
+            var byHour: [Int: Double] = [:]
+            collection.enumerateStatistics(from: start, to: end) { statistics, _ in
+                let hour = calendar.component(.hour, from: statistics.startDate)
+                if var avg = statistics.averageQuantity()?.doubleValue(for: .percent()) {
+                    if avg <= 1.0 { avg *= 100 }
+                    byHour[hour] = avg
+                }
+            }
+            return (0...maxHour).map { hour in
+                HourlyBloodOxygen(hour: hour, percent: byHour[hour])
+            }
+        } catch {
+            AppLogError("查询每小时血氧失败: \(error)")
+            return []
+        }
+    }
+
+    /// 今日每小时血氧
+    func fetchTodayHourlyBloodOxygen() async -> [HourlyBloodOxygen] {
+        await fetchHourlyBloodOxygen(for: Date())
+    }
+
+    /// 指定日期区间按天分组的血氧（取平均，0–100%）。无数据的天为 nil。
+    func fetchDailyBloodOxygen(from startDate: Date, to endDate: Date) async -> [DailyBloodOxygen] {
+        let calendar = Calendar.current
+        let start = calendar.startOfDay(for: startDate)
+
+        guard let type = HKQuantityType.quantityType(forIdentifier: .oxygenSaturation) else { return [] }
+        let predicate = HKQuery.predicateForSamples(withStart: start, end: endDate)
+
+        let descriptor = HKStatisticsCollectionQueryDescriptor(
+            predicate: .quantitySample(type: type, predicate: predicate),
+            options: .discreteAverage,
+            anchorDate: start,
+            intervalComponents: DateComponents(day: 1)
+        )
+
+        do {
+            let collection = try await descriptor.result(for: healthStore)
+            var byDay: [Date: Double] = [:]
+            collection.enumerateStatistics(from: start, to: endDate) { statistics, _ in
+                let day = calendar.startOfDay(for: statistics.startDate)
+                if var avg = statistics.averageQuantity()?.doubleValue(for: .percent()) {
+                    if avg <= 1.0 { avg *= 100 }
+                    byDay[day] = avg
+                }
+            }
+            var days: [DailyBloodOxygen] = []
+            var current = start
+            while current < endDate {
+                days.append(DailyBloodOxygen(date: current, percent: byDay[current]))
+                guard let next = calendar.date(byAdding: .day, value: 1, to: current) else { break }
+                current = next
+            }
+            return days
+        } catch {
+            AppLogError("查询每日血氧失败: \(error)")
+            return []
+        }
+    }
 }
