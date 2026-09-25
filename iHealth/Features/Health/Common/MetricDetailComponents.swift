@@ -632,3 +632,124 @@ struct TrendLineChart<Item: Identifiable>: View {
         return f.string(from: date)
     }
 }
+
+// MARK: - 通用空状态图
+
+struct MetricEmptyChart: View {
+    var body: some View {
+        VStack {
+            Spacer()
+            Text("暂无数据")
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+            Spacer()
+        }
+        .frame(maxWidth: .infinity)
+    }
+}
+
+// MARK: - 通用日卡片（标题 / 大数字 / 单位 / 图表插槽 / 底部插槽）
+
+struct MetricDayCardLayout<Chart: View, Footer: View>: View {
+    let label: String
+    let value: String
+    let color: Color
+    let unit: String
+    let chartTitle: String
+    @ViewBuilder let chart: () -> Chart
+    @ViewBuilder let footer: () -> Footer
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(label)
+                    .font(.system(size: 13))
+                    .foregroundStyle(.secondary)
+
+                HStack(alignment: .firstTextBaseline, spacing: 4) {
+                    Text(value)
+                        .font(.system(size: 28, weight: .bold, design: .rounded))
+                        .foregroundStyle(color)
+                        .monospacedDigit()
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.6)
+
+                    Text(unit)
+                        .font(.system(size: 13))
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text(chartTitle)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.secondary)
+                    Spacer(minLength: 4)
+                    Text("点击查看某时段")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.tertiary)
+                }
+                chart()
+            }
+
+            footer()
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .cardStyle()
+    }
+}
+
+// MARK: - 通用趋势卡片
+
+struct MetricTrendCardLayout<Chart: View, Footer: View>: View {
+    let label: String
+    let value: String
+    let color: Color
+    let unit: String
+    let chartTitle: String
+    @ViewBuilder let chart: () -> Chart
+    @ViewBuilder let footer: () -> Footer
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(label)
+                    .font(.system(size: 13))
+                    .foregroundStyle(.secondary)
+
+                HStack(alignment: .firstTextBaseline, spacing: 4) {
+                    Text(value)
+                        .font(.system(size: 28, weight: .bold, design: .rounded))
+                        .foregroundStyle(color)
+                        .monospacedDigit()
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.6)
+
+                    Text(unit)
+                        .font(.system(size: 13))
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text(chartTitle)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.secondary)
+                    Spacer(minLength: 4)
+                    Text("点击查看某天")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.tertiary)
+                }
+                chart()
+            }
+
+            footer()
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .cardStyle()
+    }
+}
