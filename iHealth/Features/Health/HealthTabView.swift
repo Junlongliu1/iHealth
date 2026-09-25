@@ -76,7 +76,7 @@ struct HealthTabView: View {
         .padding(.top, 24)
     }
 
-    // MARK: - 睡眠卡片（正方形：总时长 + 阶段图）
+    // MARK: - 睡眠卡片
     private var sleepCard: some View {
         NavigationLink {
             SleepDetailView()
@@ -108,14 +108,12 @@ struct HealthTabView: View {
 
                     SleepChartView(samples: healthManager.sleepSamples, showsAxes: false)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        // ★ 关键：让图表区域不拦截触摸，点击穿透到 NavigationLink
                         .allowsHitTesting(false)
                 }
             }
             .padding(14)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .aspectRatio(1, contentMode: .fit)
-            // ★ 保证整张卡片（含 padding）都是可点击区域
             .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             .background(cardBackground)
             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
@@ -127,35 +125,43 @@ struct HealthTabView: View {
         .buttonStyle(.plain)
     }
 
-    // MARK: - 生命体征卡片（点状图）
+    // MARK: - 生命体征卡片（可点击进入详情）
     private var vitalsCard: some View {
         let sleepDuration = healthManager.sleepSamples.isEmpty
             ? nil
             : SleepSummary(samples: healthManager.sleepSamples).total
 
-        return VStack(alignment: .leading, spacing: 10) {
-            cardHeader(
-                icon: "heart.text.square.fill",
-                iconColor: .pink,
-                title: "生命体征",
-                trailing: "夜间"
-            )
+        return NavigationLink {
+            VitalsDetailView()
+        } label: {
+            VStack(alignment: .leading, spacing: 10) {
+                cardHeader(
+                    icon: "heart.text.square.fill",
+                    iconColor: .pink,
+                    title: "生命体征",
+                    trailing: "夜间",
+                    showsChevron: true
+                )
 
-            VitalsDotChart(
-                vitals: healthManager.vitals,
-                sleepDuration: sleepDuration
+                VitalsDotChart(
+                    vitals: healthManager.vitals,
+                    sleepDuration: sleepDuration
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                .allowsHitTesting(false)
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .aspectRatio(1, contentMode: .fit)
+            .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .background(cardBackground)
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .stroke(Color.primary.opacity(0.08), lineWidth: 1)
             )
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
-        .padding(14)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .aspectRatio(1, contentMode: .fit)
-        .background(cardBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
-        )
+        .buttonStyle(.plain)
     }
 
     // MARK: - 通用卡片标题
