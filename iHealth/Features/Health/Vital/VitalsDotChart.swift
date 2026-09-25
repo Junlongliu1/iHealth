@@ -16,7 +16,7 @@ struct VitalsDotChart: View {
     private let rowSpacing: CGFloat = 6
 
     private struct VitalMetric: Identifiable {
-        let id = UUID()
+        let id: String
         let name: String
         let value: Double?
         let normalRange: ClosedRange<Double>
@@ -45,16 +45,41 @@ struct VitalsDotChart: View {
     private var metrics: [VitalMetric] {
         let sleepHours: Double? = sleepDuration.map { $0 / 3600 }
         return [
-            VitalMetric(name: "心率", value: vitals?.heartRate,
-                        normalRange: 40...60, color: .red),
-            VitalMetric(name: "呼吸", value: vitals?.respiratoryRate,
-                        normalRange: 12...20, color: .cyan),
-            VitalMetric(name: "体温", value: vitals?.wristTemperature,
-                        normalRange: 33.0...36.0, color: .orange),
-            VitalMetric(name: "血氧", value: vitals?.bloodOxygen,
-                        normalRange: 95...100, color: .blue),
-            VitalMetric(name: "睡眠", value: sleepHours,
-                        normalRange: 7...9, color: .indigo)
+            VitalMetric(
+                id: VitalKind.heartRate.rawValue,
+                name: VitalKind.heartRate.shortName,
+                value: vitals?.heartRate,
+                normalRange: VitalKind.heartRate.normalRange,
+                color: VitalKind.heartRate.color
+            ),
+            VitalMetric(
+                id: VitalKind.respiratoryRate.rawValue,
+                name: VitalKind.respiratoryRate.shortName,
+                value: vitals?.respiratoryRate,
+                normalRange: VitalKind.respiratoryRate.normalRange,
+                color: VitalKind.respiratoryRate.color
+            ),
+            VitalMetric(
+                id: VitalKind.wristTemperature.rawValue,
+                name: VitalKind.wristTemperature.shortName,
+                value: vitals?.wristTemperature,
+                normalRange: VitalKind.wristTemperature.normalRange,
+                color: VitalKind.wristTemperature.color
+            ),
+            VitalMetric(
+                id: VitalKind.bloodOxygen.rawValue,
+                name: VitalKind.bloodOxygen.shortName,
+                value: vitals?.bloodOxygen,
+                normalRange: VitalKind.bloodOxygen.normalRange,
+                color: VitalKind.bloodOxygen.color
+            ),
+            VitalMetric(
+                id: "sleep",
+                name: "睡眠",
+                value: sleepHours,
+                normalRange: 7...9,
+                color: .indigo
+            )
         ]
     }
 

@@ -40,7 +40,6 @@ struct DailySleepTotal: Identifiable {
 
 struct SleepDetailView: View {
     @State private var healthManager = HealthManager.shared
-    @Environment(\.colorScheme) private var colorScheme
 
     @State private var selectedRange: SleepRange = .day
     @State private var currentDay: Date = Calendar.current.startOfDay(for: Date())
@@ -171,15 +170,10 @@ struct SleepDetailView: View {
         SleepSummaryView(samples: samples)
             .padding(16)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(cardBackground)
-            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .stroke(Color.primary.opacity(0.08), lineWidth: 1)
-            )
+            .cardStyle()
     }
 
-    // MARK: - 周 / 月视图（单卡片，与日视图同构）
+    // MARK: - 周 / 月视图
 
     private func trendContent(for range: SleepRange) -> some View {
         let daily = dailyTotals(from: samples, range: range)
@@ -187,7 +181,6 @@ struct SleepDetailView: View {
         let avg = averageTotal(daily)
 
         return VStack(alignment: .leading, spacing: 12) {
-            // 标题块
             VStack(alignment: .leading, spacing: 2) {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Text("睡眠时间")
@@ -196,7 +189,7 @@ struct SleepDetailView: View {
                     Spacer()
                 }
 
-                Text(formatHourMinute(avg))
+                Text(avg.hourMinuteText)
                     .font(.system(size: 28, weight: .bold, design: .rounded))
                     .foregroundStyle(.primary)
                     .monospacedDigit()
@@ -205,7 +198,6 @@ struct SleepDetailView: View {
                     .contentTransition(.numericText())
             }
 
-            // 中部：每日柱状图
             VStack(alignment: .leading, spacing: 6) {
                 HStack {
                     Text("每日睡眠")
@@ -227,29 +219,11 @@ struct SleepDetailView: View {
                 .frame(height: 120)
             }
 
-            // 2×2 阶段统计
-            LazyVGrid(
-                columns: [
-                    GridItem(.flexible(), alignment: .leading),
-                    GridItem(.flexible(), alignment: .leading)
-                ],
-                alignment: .leading,
-                spacing: 8
-            ) {
-                SleepStageItem(label: "深睡", duration: summary.deep,  color: .indigo)
-                SleepStageItem(label: "浅睡", duration: summary.core,  color: .blue)
-                SleepStageItem(label: "眼动", duration: summary.rem,   color: .cyan)
-                SleepStageItem(label: "清醒", duration: summary.awake, color: .orange)
-            }
+            SleepStageGrid(summary: summary)
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(cardBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
-        )
+        .cardStyle()
     }
 
     // MARK: - 切换逻辑（先加载，再原子更新 + push 过渡）
@@ -386,6 +360,9 @@ struct SleepDetailView: View {
     // MARK: - 首次加载 / 切换范围
 
     private func loadCurrent() async {
+        isLoading = true
+        defer { isLoading = false }
+
         switch selectedRange {
         case .day:
             samples = await fetchDay(currentDay)
@@ -513,25 +490,6 @@ struct SleepDetailView: View {
         let sum = valid.reduce(0) { $0 + $1.total }
         return sum / Double(valid.count)
     }
-
-    private func formatHourMinute(_ t: TimeInterval) -> String {
-        guard t > 0 else { return "0分" }
-        let totalMinutes = Int(t / 60)
-        let h = totalMinutes / 60
-        let m = totalMinutes % 60
-        return h > 0 ? "\(h)小时\(m)分" : "\(m)分"
-    }
-
-    // MARK: - 卡片背景
-
-    @ViewBuilder
-    private var cardBackground: some View {
-        if colorScheme == .dark {
-            Color(red: 0.11, green: 0.11, blue: 0.12)
-        } else {
-            Color(.secondarySystemBackground)
-        }
-    }
 }
 
 // MARK: - 趋势柱状图（周 / 月共用，支持点击选中）
@@ -612,7 +570,7 @@ private struct SleepTrendChart: View {
             Text("·")
                 .foregroundStyle(.tertiary)
 
-            Text(formatHM(item.total))
+            Text(item.total > 0 ? item.total.hourMinuteText : "无数据")
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(.secondary)
                 .monospacedDigit()
@@ -628,14 +586,6 @@ private struct SleepTrendChart: View {
         f.locale = Locale(identifier: "zh_CN")
         f.dateFormat = "M月d日 EEE"
         return f.string(from: date)
-    }
-
-    private func formatHM(_ t: TimeInterval) -> String {
-        guard t > 0 else { return "无数据" }
-        let totalMinutes = Int(t / 60)
-        let h = totalMinutes / 60
-        let m = totalMinutes % 60
-        return h > 0 ? "\(h)小时\(m)分" : "\(m)分"
     }
 
     private var xStride: AxisMarkValues {

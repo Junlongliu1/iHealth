@@ -19,6 +19,7 @@ struct VitalSample: Identifiable {
 // MARK: - 睡眠日工具
 
 enum SleepDay {
+    /// 18:00 为界：日期 → 睡眠日窗口（前一日 18:00 ~ 当日 18:00）
     static func window(for date: Date) -> (start: Date, end: Date) {
         let calendar = Calendar.current
         let dayStart = calendar.startOfDay(for: date)
@@ -27,6 +28,7 @@ enum SleepDay {
         return (start, end)
     }
 
+    /// 某时刻属于哪一个睡眠日
     static func day(for date: Date) -> Date {
         let calendar = Calendar.current
         let dayStart = calendar.startOfDay(for: date)
@@ -34,6 +36,27 @@ enum SleepDay {
         return hour >= 18
             ? calendar.date(byAdding: .day, value: 1, to: dayStart)!
             : dayStart
+    }
+
+    /// 合并 asleep* 段为连续时间区间（排除 awake / inBed）
+    static func mergedIntervals(from samples: [HKCategorySample]) -> [ClosedRange<Date>] {
+        let asleep = samples
+            .filter { s in
+                guard let v = HKCategoryValueSleepAnalysis(rawValue: s.value) else { return false }
+                return v != .awake && v != .inBed
+            }
+            .sorted { $0.startDate < $1.startDate }
+
+        var intervals: [ClosedRange<Date>] = []
+        for s in asleep {
+            if let last = intervals.last, s.startDate <= last.upperBound {
+                let newUpper = max(last.upperBound, s.endDate)
+                intervals[intervals.count - 1] = last.lowerBound...newUpper
+            } else {
+                intervals.append(s.startDate...s.endDate)
+            }
+        }
+        return intervals
     }
 }
 
@@ -46,7 +69,6 @@ final class HealthManager {
 
     var activitySummary: HKActivitySummary?
     var sleepSamples: [HKCategorySample] = []
-    var vitals: VitalsData?
     var isLoading = false
     var authorizationStatus: HKAuthorizationStatus = .notDetermined
 
@@ -84,14 +106,8 @@ final class HealthManager {
             HKObjectType.categoryType(forIdentifier: .sleepAnalysis)!
         ]
 
-        let vitalsIdentifiers: [HKQuantityTypeIdentifier] = [
-            .heartRate,
-            .respiratoryRate,
-            .appleSleepingWristTemperature,
-            .oxygenSaturation
-        ]
-        for id in vitalsIdentifiers {
-            if let type = HKQuantityType.quantityType(forIdentifier: id) {
+        for kind in VitalKind.allCases {
+            if let type = HKQuantityType.quantityType(forIdentifier: kind.identifier) {
                 typesToRead.insert(type)
             }
         }
@@ -102,8 +118,7 @@ final class HealthManager {
 
             async let summaryTask = fetchTodayActivitySummary()
             async let sleepTask = fetchTodaySleepData()
-            async let vitalsTask = fetchTodayVitals()
-            _ = await (summaryTask, sleepTask, vitalsTask)
+            _ = await (summaryTask, sleepTask)
         } catch {
             AppLogError("HealthKit 授权失败: \(error)")
             authorizationStatus = .sharingDenied
@@ -181,56 +196,8 @@ final class HealthManager {
         return true
     }
 
-    // MARK: - 生命体征
+    // MARK: - 生命体征原始样本
 
-    func fetchTodayVitals() async {
-        let endDate = Date()
-        guard let startDate = Calendar.current.date(byAdding: .hour, value: -16, to: endDate) else {
-            vitals = VitalsData()
-            return
-        }
-        let predicate = HKQuery.predicateForSamples(withStart: startDate, end: endDate)
-
-        let perMinute = HKUnit.count().unitDivided(by: .minute())
-
-        async let hr = fetchAverage(.heartRate, predicate: predicate, unit: perMinute)
-        async let rr = fetchAverage(.respiratoryRate, predicate: predicate, unit: perMinute)
-        async let temp = fetchAverage(.appleSleepingWristTemperature, predicate: predicate, unit: .degreeCelsius())
-        async let ox = fetchAverage(.oxygenSaturation, predicate: predicate, unit: .percent())
-
-        vitals = VitalsData(
-            heartRate: await hr,
-            respiratoryRate: await rr,
-            wristTemperature: await temp,
-            bloodOxygen: await ox
-        )
-    }
-
-    private func fetchAverage(
-        _ identifier: HKQuantityTypeIdentifier,
-        predicate: NSPredicate,
-        unit: HKUnit
-    ) async -> Double? {
-        guard let type = HKQuantityType.quantityType(forIdentifier: identifier) else { return nil }
-
-        let descriptor = HKStatisticsQueryDescriptor(
-            predicate: .quantitySample(type: type, predicate: predicate),
-            options: .discreteAverage
-        )
-
-        guard let stats = try? await descriptor.result(for: healthStore),
-              let quantity = stats.averageQuantity() else {
-            return nil
-        }
-
-        var value = quantity.doubleValue(for: unit)
-        if identifier == .oxygenSaturation && value <= 1.0 {
-            value *= 100
-        }
-        return value
-    }
-
-    /// 通用查询：取指定时间范围内某类指标的原始样本
     func fetchVitalSamples(
         identifier: HKQuantityTypeIdentifier,
         unit: HKUnit,
@@ -256,36 +223,6 @@ final class HealthManager {
         } catch {
             AppLogError("查询生命体征样本失败: \(error)")
             return []
-        }
-    }
-
-    /// ★ 建立个人基线用：取过去 N 天，按「睡眠日」聚合出每天的平均值
-    func fetchDailyAverages(
-        identifier: HKQuantityTypeIdentifier,
-        unit: HKUnit,
-        days: Int,
-        percentFix: Bool = false
-    ) async -> [Double] {
-        let calendar = Calendar.current
-        let end = Date()
-        guard let start = calendar.date(byAdding: .day, value: -days, to: end) else { return [] }
-
-        let samples = await fetchVitalSamples(
-            identifier: identifier,
-            unit: unit,
-            from: start,
-            to: end,
-            percentFix: percentFix
-        )
-
-        var byDay: [Date: [Double]] = [:]
-        for s in samples {
-            let day = SleepDay.day(for: s.date)
-            byDay[day, default: []].append(s.value)
-        }
-
-        return byDay.values.map { values in
-            values.reduce(0, +) / Double(values.count)
         }
     }
 }

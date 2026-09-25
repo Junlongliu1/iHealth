@@ -4,7 +4,7 @@
 //
 //  睡眠数据图表视图。
 //  使用 Swift Charts 绘制睡眠阶段图。
-//  紧凑模式：各阶段色块水平 + 竖直方向都首尾相连，形成连续带。
+//  各阶段色块水平 + 竖直方向都首尾相连，形成连续带。
 //  支持点击查看某段阶段的详细信息，选中位置显示竖线。
 //  仅适配 iOS 26+。
 //
@@ -12,21 +12,6 @@
 import SwiftUI
 import Charts
 import HealthKit
-
-// MARK: - 条件化 chartXSelection
-
-private extension View {
-    /// 仅在 condition 为 true 时安装 chartXSelection；
-    /// 为 false 时完全不安装手势，避免拦截触摸事件。
-    @ViewBuilder
-    func applyChartXSelection(_ condition: Bool, value: Binding<Date?>) -> some View {
-        if condition {
-            self.chartXSelection(value: value)
-        } else {
-            self
-        }
-    }
-}
 
 struct SleepChartView: View {
     let samples: [HKCategorySample]
@@ -36,53 +21,6 @@ struct SleepChartView: View {
     var showsAxes: Bool = true
 
     @State private var selectedDate: Date?
-
-    private enum SleepStage: Int, Comparable, CaseIterable {
-        case deep = 0, core, rem, awake
-
-        var label: String {
-            switch self {
-            case .deep:  return "深睡"
-            case .core:  return "浅睡"
-            case .rem:   return "眼动"
-            case .awake: return "清醒"
-            }
-        }
-
-        var color: Color {
-            switch self {
-            case .deep:  return .indigo
-            case .core:  return .blue
-            case .rem:   return .cyan
-            case .awake: return .orange
-            }
-        }
-
-        var plotIndex: Double {
-            switch self {
-            case .deep:  return 0
-            case .core:  return 1
-            case .rem:   return 2
-            case .awake: return 3
-            }
-        }
-
-        static func from(_ value: Int) -> SleepStage? {
-            switch HKCategoryValueSleepAnalysis(rawValue: value) {
-            case .asleepDeep: return .deep
-            case .asleepCore: return .core
-            case .asleepREM:  return .rem
-            case .awake:      return .awake
-            default:          return nil
-            }
-        }
-
-        static func < (lhs: SleepStage, rhs: SleepStage) -> Bool {
-            lhs.rawValue < rhs.rawValue
-        }
-    }
-
-    private static let axisStages: [SleepStage] = [.deep, .core, .rem, .awake]
 
     private struct SleepEntry: Identifiable {
         let id = UUID()
@@ -135,8 +73,8 @@ struct SleepChartView: View {
             }
         }
         .chartForegroundStyleScale(
-            domain: Self.axisStages.map { $0.label },
-            range:  Self.axisStages.map { $0.color }
+            domain: SleepStage.allCases.map { $0.label },
+            range:  SleepStage.allCases.map { $0.color }
         )
         .chartYScale(domain: -0.5...3.5)
         .chartXScale(domain: xDomain)
@@ -163,7 +101,7 @@ struct SleepChartView: View {
                 AxisMarks(position: .leading, values: [0, 1, 2, 3]) { value in
                     AxisValueLabel {
                         if let v = value.as(Double.self),
-                           let stage = Self.axisStages.first(where: { $0.plotIndex == v }) {
+                           let stage = SleepStage.allCases.first(where: { $0.plotIndex == v }) {
                             Text(stage.label)
                                 .font(.system(size: 10))
                                 .foregroundStyle(.secondary)
@@ -173,8 +111,7 @@ struct SleepChartView: View {
             }
         }
         .chartLegend(.hidden)
-        // ★ 关键：只在 showsAxes 时安装 chartXSelection，避免首页卡片拦截触摸
-        .applyChartXSelection(showsAxes, value: $selectedDate)
+        .chartXSelection(value: $selectedDate)
         .chartPlotStyle { plot in
             plot.padding(.vertical, showsAxes ? 4 : 0)
         }
@@ -209,7 +146,7 @@ struct SleepChartView: View {
             Text("·")
                 .foregroundStyle(.tertiary)
 
-            Text(durationText(entry))
+            Text(entry.end.timeIntervalSince(entry.start).shortHourMinuteText)
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(.secondary)
                 .monospacedDigit()
@@ -222,16 +159,5 @@ struct SleepChartView: View {
 
     private func timeText(_ date: Date) -> String {
         date.formatted(.dateTime.hour(.twoDigits(amPM: .omitted)).minute(.twoDigits))
-    }
-
-    private func durationText(_ entry: SleepEntry) -> String {
-        let t = entry.end.timeIntervalSince(entry.start)
-        let minutes = max(Int(t / 60), 1)
-        if minutes >= 60 {
-            let h = minutes / 60
-            let m = minutes % 60
-            return m > 0 ? "\(h)时\(m)分" : "\(h)小时"
-        }
-        return "\(minutes)分"
     }
 }

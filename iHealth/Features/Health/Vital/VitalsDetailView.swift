@@ -11,123 +11,12 @@ import SwiftUI
 import HealthKit
 import Charts
 
-// MARK: - 指标类型
-
-enum VitalKind: String, CaseIterable, Identifiable {
-    case heartRate
-    case respiratoryRate
-    case wristTemperature
-    case bloodOxygen
-
-    var id: String { rawValue }
-
-    var name: String {
-        switch self {
-        case .heartRate:        return "心率"
-        case .respiratoryRate:  return "呼吸频率"
-        case .wristTemperature: return "手腕温度"
-        case .bloodOxygen:      return "血氧"
-        }
-    }
-
-    var shortName: String {
-        switch self {
-        case .heartRate:        return "心率"
-        case .respiratoryRate:  return "呼吸"
-        case .wristTemperature: return "体温"
-        case .bloodOxygen:      return "血氧"
-        }
-    }
-
-    var icon: String {
-        switch self {
-        case .heartRate:        return "heart.fill"
-        case .respiratoryRate:  return "wind"
-        case .wristTemperature: return "thermometer.medium"
-        case .bloodOxygen:      return "drop.fill"
-        }
-    }
-
-    var color: Color {
-        switch self {
-        case .heartRate:        return .red
-        case .respiratoryRate:  return .cyan
-        case .wristTemperature: return .orange
-        case .bloodOxygen:      return .blue
-        }
-    }
-
-    var unitText: String {
-        switch self {
-        case .heartRate, .respiratoryRate: return "次/分"
-        case .wristTemperature:            return "°C"
-        case .bloodOxygen:                 return "%"
-        }
-    }
-
-    var decimals: Int {
-        1
-    }
-
-    /// 睡眠场景下的参考范围
-    var normalRange: ClosedRange<Double> {
-        switch self {
-        case .heartRate:        return 40...60      // 睡眠心率
-        case .respiratoryRate:  return 12...20      // 睡眠呼吸
-        case .wristTemperature: return 33.0...36.0  // 手腕皮肤温度
-        case .bloodOxygen:      return 95...100     // 血氧
-        }
-    }
-
-    /// 范围说明文案（显示给用户看）
-    var rangeHint: String {
-        switch self {
-        case .heartRate:        return "睡眠静息参考"
-        case .respiratoryRate:  return "睡眠呼吸参考"
-        case .wristTemperature: return "手腕皮肤温度参考"
-        case .bloodOxygen:      return "血氧参考"
-        }
-    }
-
-    var identifier: HKQuantityTypeIdentifier {
-        switch self {
-        case .heartRate:        return .heartRate
-        case .respiratoryRate:  return .respiratoryRate
-        case .wristTemperature: return .appleSleepingWristTemperature
-        case .bloodOxygen:      return .oxygenSaturation
-        }
-    }
-
-    var unitHK: HKUnit {
-        switch self {
-        case .heartRate, .respiratoryRate:
-            return HKUnit.count().unitDivided(by: .minute())
-        case .wristTemperature:
-            return .degreeCelsius()
-        case .bloodOxygen:
-            return .percent()
-        }
-    }
-
-    var needsPercentFix: Bool {
-        self == .bloodOxygen
-    }
-
-    var isSleepOnly: Bool {
-        self == .wristTemperature
-    }
-}
-
 // MARK: - 详情页
 
 struct VitalsDetailView: View {
-    @State private var healthManager = HealthManager.shared
-    @Environment(\.colorScheme) private var colorScheme
-
     @State private var currentDay: Date = Calendar.current.startOfDay(for: Date())
     @State private var trends: [VitalKind: [VitalSample]] = [:]
     @State private var isLoading = true
-    @State private var dayCache: [Date: [VitalKind: [VitalSample]]] = [:]
 
     var body: some View {
         ScrollView {
@@ -208,7 +97,7 @@ struct VitalsDetailView: View {
             .contentShape(Circle())
     }
 
-    // MARK: - 日期切换
+    // MARK: - 日期切换（先加载再原子更新，避免闪旧数据）
 
     private var canGoForward: Bool {
         Calendar.current.startOfDay(for: currentDay) < Calendar.current.startOfDay(for: Date())
@@ -220,10 +109,13 @@ struct VitalsDetailView: View {
         guard let newDay = calendar.date(byAdding: .day, value: offset, to: currentDay),
               newDay <= today else { return }
 
-        withAnimation(.smooth(duration: 0.22)) {
-            currentDay = newDay
+        Task {
+            let data = await VitalsCalculator.shared.dayData(for: newDay)
+            withAnimation(.smooth(duration: 0.22)) {
+                currentDay = newDay
+                trends = data.samples
+            }
         }
-        Task { await loadTrends(for: newDay) }
     }
 
     private var dayTitle: String {
@@ -246,11 +138,10 @@ struct VitalsDetailView: View {
 
     // MARK: - 多指标联合观察
 
-    /// 返回异常指标名称列表；< 2 项时返回 nil
     private var jointBanner: [String]? {
         var abnormal: [String] = []
         for kind in VitalKind.allCases {
-            guard let avg = averageOf(trends[kind] ?? []) else { continue }
+            guard let avg = (trends[kind] ?? []).averageValue else { continue }
             if !kind.normalRange.contains(avg) {
                 abnormal.append(kind.shortName)
             }
@@ -294,11 +185,10 @@ struct VitalsDetailView: View {
 
     private func metricCard(for kind: VitalKind) -> some View {
         let samples = trends[kind] ?? []
-        let average = averageOf(samples)
+        let average = samples.averageValue
         let current = samples.last?.value
 
         return VStack(alignment: .leading, spacing: 12) {
-            // 标题行
             HStack(spacing: 6) {
                 Image(systemName: kind.icon)
                     .font(.system(size: 13, weight: .semibold))
@@ -313,7 +203,6 @@ struct VitalsDetailView: View {
                 statusBadge(value: average, range: kind.normalRange)
             }
 
-            // 大数值 + 最新值
             HStack(alignment: .firstTextBaseline, spacing: 4) {
                 Text(format(average, decimals: kind.decimals))
                     .font(.system(size: 32, weight: .bold, design: .rounded))
@@ -343,10 +232,8 @@ struct VitalsDetailView: View {
                 }
             }
 
-            // 参考范围说明行
             baselineInfoRow(kind: kind)
 
-            // 图表
             Group {
                 if samples.count >= 2 {
                     chart(for: kind, samples: samples)
@@ -360,12 +247,7 @@ struct VitalsDetailView: View {
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(cardBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
-        )
+        .cardStyle()
     }
 
     // MARK: - 参考范围说明行
@@ -582,96 +464,20 @@ struct VitalsDetailView: View {
         return range.contains(value) ? baseColor : .pink
     }
 
-    private func averageOf(_ samples: [VitalSample]) -> Double? {
-        guard !samples.isEmpty else { return nil }
-        let sum = samples.reduce(0) { $0 + $1.value }
-        return sum / Double(samples.count)
-    }
-
     private func format(_ value: Double?, decimals: Int) -> String {
         guard let value else { return "--" }
         return decimals > 0 ? String(format: "%.\(decimals)f", value) : "\(Int(value))"
     }
-    
+
     private func formatShort(_ value: Double, decimals: Int) -> String {
         decimals > 0 ? String(format: "%.\(decimals)f", value) : "\(Int(value))"
     }
 
-    // MARK: - 卡片背景
-
-    @ViewBuilder
-    private var cardBackground: some View {
-        if colorScheme == .dark {
-            Color(red: 0.11, green: 0.11, blue: 0.12)
-        } else {
-            Color(.secondarySystemBackground)
-        }
-    }
-
-    // MARK: - 数据加载（只保留睡眠期间数据）
+    // MARK: - 数据加载（统一走 VitalsCalculator）
 
     private func loadTrends(for day: Date) async {
-        let calendar = Calendar.current
-        let key = calendar.startOfDay(for: day)
-
-        if let cached = dayCache[key] {
-            trends = cached
-            isLoading = false
-            return
-        }
-
-        if trends.isEmpty { isLoading = true }
-
-        let (sleepDayStart, sleepDayEnd) = SleepDay.window(for: day)
-        let queryStart = calendar.date(byAdding: .hour, value: -2, to: sleepDayStart)!
-        let queryEnd = calendar.date(byAdding: .hour, value: 2, to: sleepDayEnd)!
-
-        let sleepRaw = await healthManager.fetchSleepSamples(from: queryStart, to: queryEnd)
-        let intervals = mergedSleepIntervals(from: sleepRaw)
-
-        var result: [VitalKind: [VitalSample]] = [:]
-        for kind in VitalKind.allCases {
-            let samples = await healthManager.fetchVitalSamples(
-                identifier: kind.identifier,
-                unit: kind.unitHK,
-                from: queryStart,
-                to: queryEnd,
-                percentFix: kind.needsPercentFix
-            )
-
-            if kind == .wristTemperature {
-                result[kind] = samples.filter {
-                    $0.date >= sleepDayStart && $0.date < sleepDayEnd
-                }
-            } else {
-                result[kind] = samples.filter { sample in
-                    intervals.contains { $0.contains(sample.date) }
-                }
-            }
-        }
-
-        dayCache[key] = result
-        trends = result
+        let data = await VitalsCalculator.shared.dayData(for: day)
+        trends = data.samples
         isLoading = false
-    }
-
-    private func mergedSleepIntervals(from samples: [HKCategorySample]) -> [ClosedRange<Date>] {
-        let asleep = samples
-            .filter { s in
-                guard let v = HKCategoryValueSleepAnalysis(rawValue: s.value) else { return false }
-                return v != .awake && v != .inBed
-            }
-            .sorted { $0.startDate < $1.startDate }
-
-        var intervals: [ClosedRange<Date>] = []
-        for s in asleep {
-            if let last = intervals.last, s.startDate <= last.upperBound {
-                let newUpper = max(last.upperBound, s.endDate)
-                intervals[intervals.count - 1] = last.lowerBound...newUpper
-            } else {
-                intervals.append(s.startDate...s.endDate)
-            }
-        }
-        return intervals
     }
 }
