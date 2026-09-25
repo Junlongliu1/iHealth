@@ -16,7 +16,7 @@ struct MainTabView: View {
 
             Tab("运动", systemImage: "figure.run") {
                 NavigationStack {
-                    PlaceholderView(title: "运动", icon: "figure.run")
+                    SportTabView()
                 }
             }
 

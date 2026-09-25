@@ -10,9 +10,22 @@
 		FA95F8AD304E526C008A2501 /* iHealth.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = iHealth.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		FA874037306673E400850388 /* Exceptions for "iHealth" folder in "iHealth" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = FA95F8AC304E526C008A2501 /* iHealth */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		FA95F8AF304E526C008A2501 /* iHealth */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				FA874037306673E400850388 /* Exceptions for "iHealth" folder in "iHealth" target */,
+			);
 			path = iHealth;
 			sourceTree = "<group>";
 		};
@@ -86,11 +99,12 @@
 				};
 			};
 			buildConfigurationList = FA95F8A8304E526C008A2501 /* Build configuration list for PBXProject "iHealth" */;
-			developmentRegion = en;
+			developmentRegion = "zh-Hans";
 			hasScannedForEncodings = 0;
 			knownRegions = (
 				en,
 				Base,
+				"zh-Hans",
 			);
 			mainGroup = FA95F8A4304E526C008A2501;
 			minimizedProjectReferenceProxies = 1;
@@ -259,6 +273,7 @@
 				DEVELOPMENT_TEAM = WTSH9JD2VD;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = iHealth/Info.plist;
 				INFOPLIST_KEY_NSHealthShareUsageDescription = "用于读取您的健康数据以展示健康看板";
 				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "用于写入您的健康数据";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
@@ -295,6 +310,7 @@
 				DEVELOPMENT_TEAM = WTSH9JD2VD;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = iHealth/Info.plist;
 				INFOPLIST_KEY_NSHealthShareUsageDescription = "用于读取您的健康数据以展示健康看板";
 				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "用于写入您的健康数据";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
