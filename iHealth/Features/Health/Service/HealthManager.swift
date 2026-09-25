@@ -2,7 +2,10 @@
 //  HealthManager.swift
 //  iHealth
 //
-
+//  HealthKit 数据管理器（单例）。
+//  负责请求活动摘要的读取权限，并查询今日的 HKActivitySummary，
+//  供健康页面展示健身圆环数据。
+//
 import HealthKit
 import Observation
 
