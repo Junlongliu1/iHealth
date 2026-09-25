@@ -117,6 +117,11 @@ final class HealthManager {
             typesToRead.insert(basalType)
         }
 
+        // 活动消耗（Active Energy Burned）
+        if let activeType = HKQuantityType.quantityType(forIdentifier: .activeEnergyBurned) {
+            typesToRead.insert(activeType)
+        }
+        
         for kind in VitalKind.allCases {
             if let type = HKQuantityType.quantityType(forIdentifier: kind.identifier) {
                 typesToRead.insert(type)
@@ -538,6 +543,98 @@ final class HealthManager {
             return days
         } catch {
             AppLogError("查询每日基础代谢失败: \(error)")
+            return []
+        }
+    }
+    
+    // MARK: - 活动消耗
+
+    /// 指定日期按小时分组的活动消耗（大卡）。
+    /// - 今天：从 0 点到当前小时
+    /// - 历史某天：0–23 完整返回，缺失小时补 0
+    func fetchHourlyActiveEnergy(for day: Date) async -> [HourlyActiveEnergy] {
+        let calendar = Calendar.current
+        let start = calendar.startOfDay(for: day)
+        let now = Date()
+        let isToday = calendar.isDateInToday(day)
+
+        let end: Date
+        let maxHour: Int
+        if isToday {
+            end = now
+            maxHour = calendar.component(.hour, from: now)
+        } else {
+            end = calendar.date(byAdding: .day, value: 1, to: start)!
+            maxHour = 23
+        }
+
+        guard let type = HKQuantityType.quantityType(forIdentifier: .activeEnergyBurned) else { return [] }
+        let predicate = HKQuery.predicateForSamples(withStart: start, end: end)
+
+        let descriptor = HKStatisticsCollectionQueryDescriptor(
+            predicate: .quantitySample(type: type, predicate: predicate),
+            options: .cumulativeSum,
+            anchorDate: start,
+            intervalComponents: DateComponents(hour: 1)
+        )
+
+        do {
+            let collection = try await descriptor.result(for: healthStore)
+
+            var byHour: [Int: Double] = [:]
+            collection.enumerateStatistics(from: start, to: end) { statistics, _ in
+                let hour = calendar.component(.hour, from: statistics.startDate)
+                byHour[hour] = statistics.sumQuantity()?.doubleValue(for: .kilocalorie()) ?? 0
+            }
+
+            return (0...maxHour).map { hour in
+                HourlyActiveEnergy(hour: hour, kilocalories: byHour[hour] ?? 0)
+            }
+        } catch {
+            AppLogError("查询每小时活动消耗失败: \(error)")
+            return []
+        }
+    }
+
+    /// 今日每小时活动消耗（0 点至当前小时）
+    func fetchTodayHourlyActiveEnergy() async -> [HourlyActiveEnergy] {
+        await fetchHourlyActiveEnergy(for: Date())
+    }
+
+    /// 指定日期区间按天分组的活动消耗（大卡）
+    func fetchDailyActiveEnergy(from startDate: Date, to endDate: Date) async -> [DailyActiveEnergy] {
+        let calendar = Calendar.current
+        let start = calendar.startOfDay(for: startDate)
+
+        guard let type = HKQuantityType.quantityType(forIdentifier: .activeEnergyBurned) else { return [] }
+        let predicate = HKQuery.predicateForSamples(withStart: start, end: endDate)
+
+        let descriptor = HKStatisticsCollectionQueryDescriptor(
+            predicate: .quantitySample(type: type, predicate: predicate),
+            options: .cumulativeSum,
+            anchorDate: start,
+            intervalComponents: DateComponents(day: 1)
+        )
+
+        do {
+            let collection = try await descriptor.result(for: healthStore)
+
+            var byDay: [Date: Double] = [:]
+            collection.enumerateStatistics(from: start, to: endDate) { statistics, _ in
+                let day = calendar.startOfDay(for: statistics.startDate)
+                byDay[day] = statistics.sumQuantity()?.doubleValue(for: .kilocalorie()) ?? 0
+            }
+
+            var days: [DailyActiveEnergy] = []
+            var current = start
+            while current < endDate {
+                days.append(DailyActiveEnergy(date: current, kilocalories: byDay[current] ?? 0))
+                guard let next = calendar.date(byAdding: .day, value: 1, to: current) else { break }
+                current = next
+            }
+            return days
+        } catch {
+            AppLogError("查询每日活动消耗失败: \(error)")
             return []
         }
     }
