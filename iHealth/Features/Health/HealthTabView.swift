@@ -11,6 +11,8 @@ import HealthKit
 
 struct HealthTabView: View {
     @State private var healthManager = HealthManager.shared
+    @State private var prefs = HealthCardPreferences.shared
+
     @State private var todayVitals: HealthManager.VitalsData?
     @State private var todayHourlySteps: [HourlySteps] = []
     @State private var todayHourlyDaylight: [HourlyDaylight] = []
@@ -20,6 +22,8 @@ struct HealthTabView: View {
     @State private var todayHourlyBloodOxygen: [HourlyBloodOxygen] = []
     @State private var todayHourlyRestingHeartRate: [HourlyRestingHeartRate] = []
     @State private var todayHourlyHRV: [HourlyHeartRateVariability] = []
+    
+    @State private var showEditor = false
 
     private let columns = [
         GridItem(.flexible(), spacing: 14),
@@ -36,64 +40,9 @@ struct HealthTabView: View {
                     ringsCard
 
                     LazyVGrid(columns: columns, spacing: 14) {
-                        sleepCard
-                        vitalsCard
-
-                        NavigationLink {
-                            StepsDetailView()
-                        } label: {
-                            StepsCard(hourly: todayHourlySteps)
+                        ForEach(prefs.visibleCards) { kind in
+                            cardView(for: kind)
                         }
-                        .buttonStyle(.plain)
-
-                        NavigationLink {
-                            DaylightDetailView()
-                        } label: {
-                            DaylightCard(hourly: todayHourlyDaylight)
-                        }
-                        .buttonStyle(.plain)
-                        
-                        NavigationLink {
-                            BasalEnergyDetailView()
-                        } label: {
-                            BasalEnergyCard(hourly: todayHourlyBasalEnergy)
-                        }
-                        .buttonStyle(.plain)
-                        
-                        NavigationLink {
-                            ActiveEnergyDetailView()
-                        } label: {
-                            ActiveEnergyCard(hourly: todayHourlyActiveEnergy)
-                        }
-                        .buttonStyle(.plain)
-                        
-                        NavigationLink {
-                            HeartRateDetailView()
-                        } label: {
-                            HeartRateCard(hourly: todayHourlyHeartRate)
-                        }
-                        .buttonStyle(.plain)
-
-                        NavigationLink {
-                            BloodOxygenDetailView()
-                        } label: {
-                            BloodOxygenCard(hourly: todayHourlyBloodOxygen)
-                        }
-                        .buttonStyle(.plain)
-
-                        NavigationLink {
-                            RestingHeartRateDetailView()
-                        } label: {
-                            RestingHeartRateCard(hourly: todayHourlyRestingHeartRate)
-                        }
-                        .buttonStyle(.plain)
-
-                        NavigationLink {
-                            HeartRateVariabilityDetailView()
-                        } label: {
-                            HeartRateVariabilityCard(hourly: todayHourlyHRV)
-                        }
-                        .buttonStyle(.plain)
                     }
                 }
             }
@@ -102,19 +51,37 @@ struct HealthTabView: View {
         }
         .scrollEdgeEffectStyle(.soft, for: .top)
         .navigationTitle("健康")
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Menu {
+                    Button {
+                        showEditor = true
+                    } label: {
+                        Text("编辑卡片")
+                    }
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .font(.system(size: 16, weight: .medium))
+                }
+                .accessibilityLabel("更多")
+            }
+        }
+        .sheet(isPresented: $showEditor) {
+            HealthCardEditorView()
+        }
         .task {
             await healthManager.requestAuthorization()
 
-            // 每个卡片独立并行加载，加载完即显示，不必等全部完成
-            Task { todayVitals                = await VitalsCalculator.shared.computeToday() }
-            Task { todayHourlySteps           = await healthManager.fetchTodayHourlySteps() }
-            Task { todayHourlyDaylight        = await healthManager.fetchTodayHourlyDaylight() }
-            Task { todayHourlyBasalEnergy     = await healthManager.fetchTodayHourlyBasalEnergy() }
-            Task { todayHourlyActiveEnergy    = await healthManager.fetchTodayHourlyActiveEnergy() }
-            Task { todayHourlyHeartRate       = await healthManager.fetchTodayHourlyHeartRate() }
-            Task { todayHourlyBloodOxygen     = await healthManager.fetchTodayHourlyBloodOxygen() }
+            // 每张卡片独立并行加载，加载完即显示，不必等全部完成
+            Task { todayVitals                 = await VitalsCalculator.shared.computeToday() }
+            Task { todayHourlySteps            = await healthManager.fetchTodayHourlySteps() }
+            Task { todayHourlyDaylight         = await healthManager.fetchTodayHourlyDaylight() }
+            Task { todayHourlyBasalEnergy      = await healthManager.fetchTodayHourlyBasalEnergy() }
+            Task { todayHourlyActiveEnergy     = await healthManager.fetchTodayHourlyActiveEnergy() }
+            Task { todayHourlyHeartRate        = await healthManager.fetchTodayHourlyHeartRate() }
+            Task { todayHourlyBloodOxygen      = await healthManager.fetchTodayHourlyBloodOxygen() }
             Task { todayHourlyRestingHeartRate = await healthManager.fetchTodayHourlyRestingHeartRate() }
-            Task { todayHourlyHRV             = await healthManager.fetchTodayHourlyHeartRateVariability() }
+            Task { todayHourlyHRV              = await healthManager.fetchTodayHourlyHeartRateVariability() }
         }
     }
 
@@ -145,6 +112,83 @@ struct HealthTabView: View {
         .frame(maxWidth: .infinity)
         .cardStyle(radius: 14)
         .padding(.top, 24)
+    }
+
+    // MARK: - 卡片分发
+
+    @ViewBuilder
+    private func cardView(for kind: HealthCardKind) -> some View {
+        switch kind {
+        case .sleep:
+            sleepCard
+
+        case .vitals:
+            vitalsCard
+
+        case .steps:
+            NavigationLink {
+                StepsDetailView()
+            } label: {
+                StepsCard(hourly: todayHourlySteps)
+            }
+            .buttonStyle(.plain)
+
+        case .daylight:
+            NavigationLink {
+                DaylightDetailView()
+            } label: {
+                DaylightCard(hourly: todayHourlyDaylight)
+            }
+            .buttonStyle(.plain)
+
+        case .basalEnergy:
+            NavigationLink {
+                BasalEnergyDetailView()
+            } label: {
+                BasalEnergyCard(hourly: todayHourlyBasalEnergy)
+            }
+            .buttonStyle(.plain)
+
+        case .activeEnergy:
+            NavigationLink {
+                ActiveEnergyDetailView()
+            } label: {
+                ActiveEnergyCard(hourly: todayHourlyActiveEnergy)
+            }
+            .buttonStyle(.plain)
+
+        case .heartRate:
+            NavigationLink {
+                HeartRateDetailView()
+            } label: {
+                HeartRateCard(hourly: todayHourlyHeartRate)
+            }
+            .buttonStyle(.plain)
+
+        case .bloodOxygen:
+            NavigationLink {
+                BloodOxygenDetailView()
+            } label: {
+                BloodOxygenCard(hourly: todayHourlyBloodOxygen)
+            }
+            .buttonStyle(.plain)
+
+        case .restingHeartRate:
+            NavigationLink {
+                RestingHeartRateDetailView()
+            } label: {
+                RestingHeartRateCard(hourly: todayHourlyRestingHeartRate)
+            }
+            .buttonStyle(.plain)
+
+        case .hrv:
+            NavigationLink {
+                HeartRateVariabilityDetailView()
+            } label: {
+                HeartRateVariabilityCard(hourly: todayHourlyHRV)
+            }
+            .buttonStyle(.plain)
+        }
     }
 
     // MARK: - 睡眠卡片
@@ -192,7 +236,7 @@ struct HealthTabView: View {
         .buttonStyle(.plain)
     }
 
-    // MARK: - 生命体征卡片（可点击进入详情）
+    // MARK: - 生命体征卡片
 
     private var vitalsCard: some View {
         let sleepDuration = healthManager.sleepSamples.isEmpty
