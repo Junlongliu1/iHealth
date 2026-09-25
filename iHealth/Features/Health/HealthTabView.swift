@@ -18,6 +18,8 @@ struct HealthTabView: View {
     @State private var todayHourlyActiveEnergy: [HourlyActiveEnergy] = []
     @State private var todayHourlyHeartRate: [HourlyHeartRate] = []
     @State private var todayHourlyBloodOxygen: [HourlyBloodOxygen] = []
+    @State private var todayHourlyRestingHeartRate: [HourlyRestingHeartRate] = []
+    @State private var todayHourlyHRV: [HourlyHeartRateVariability] = []
 
     private let columns = [
         GridItem(.flexible(), spacing: 14),
@@ -78,6 +80,20 @@ struct HealthTabView: View {
                             BloodOxygenCard(hourly: todayHourlyBloodOxygen)
                         }
                         .buttonStyle(.plain)
+
+                        NavigationLink {
+                            RestingHeartRateDetailView()
+                        } label: {
+                            RestingHeartRateCard(hourly: todayHourlyRestingHeartRate)
+                        }
+                        .buttonStyle(.plain)
+
+                        NavigationLink {
+                            HeartRateVariabilityDetailView()
+                        } label: {
+                            HeartRateVariabilityCard(hourly: todayHourlyHRV)
+                        }
+                        .buttonStyle(.plain)
                     }
                 }
             }
@@ -96,6 +112,8 @@ struct HealthTabView: View {
             async let active = healthManager.fetchTodayHourlyActiveEnergy()
             async let heartRate = healthManager.fetchTodayHourlyHeartRate()
             async let bloodOxygen = healthManager.fetchTodayHourlyBloodOxygen()
+            async let restingHR = healthManager.fetchTodayHourlyRestingHeartRate()
+            async let hrv       = healthManager.fetchTodayHourlyHeartRateVariability()
 
             todayVitals = await vitals
             todayHourlySteps = await steps
@@ -104,6 +122,8 @@ struct HealthTabView: View {
             todayHourlyActiveEnergy = await active
             todayHourlyHeartRate = await heartRate
             todayHourlyBloodOxygen = await bloodOxygen
+            todayHourlyRestingHeartRate = await restingHR
+            todayHourlyHRV              = await hrv
         }
     }
 

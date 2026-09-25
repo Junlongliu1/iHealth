@@ -122,6 +122,16 @@ final class HealthManager {
             typesToRead.insert(activeType)
         }
         
+        // 静息心率
+        if let restingType = HKQuantityType.quantityType(forIdentifier: .restingHeartRate) {
+            typesToRead.insert(restingType)
+        }
+
+        // 心率变异性
+        if let hrvType = HKQuantityType.quantityType(forIdentifier: .heartRateVariabilitySDNN) {
+            typesToRead.insert(hrvType)
+        }
+        
         for kind in VitalKind.allCases {
             if let type = HKQuantityType.quantityType(forIdentifier: kind.identifier) {
                 typesToRead.insert(type)
@@ -819,6 +829,191 @@ final class HealthManager {
             return days
         } catch {
             AppLogError("查询每日血氧失败: \(error)")
+            return []
+        }
+    }
+    
+    // MARK: - 静息心率（每小时 / 每日）
+
+    /// 指定日期按小时分组的静息心率。无数据的小时为 nil。
+    /// 注：静息心率通常每天只有一个值，所以大部分小时会是 nil。
+    func fetchHourlyRestingHeartRate(for day: Date) async -> [HourlyRestingHeartRate] {
+        let calendar = Calendar.current
+        let start = calendar.startOfDay(for: day)
+        let now = Date()
+        let isToday = calendar.isDateInToday(day)
+
+        let end: Date
+        let maxHour: Int
+        if isToday {
+            end = now
+            maxHour = calendar.component(.hour, from: now)
+        } else {
+            end = calendar.date(byAdding: .day, value: 1, to: start)!
+            maxHour = 23
+        }
+
+        guard let type = HKQuantityType.quantityType(forIdentifier: .restingHeartRate) else { return [] }
+        let predicate = HKQuery.predicateForSamples(withStart: start, end: end)
+        let unit = HKUnit.count().unitDivided(by: .minute())
+
+        let descriptor = HKStatisticsCollectionQueryDescriptor(
+            predicate: .quantitySample(type: type, predicate: predicate),
+            options: .discreteAverage,
+            anchorDate: start,
+            intervalComponents: DateComponents(hour: 1)
+        )
+
+        do {
+            let collection = try await descriptor.result(for: healthStore)
+            var byHour: [Int: Double] = [:]
+            collection.enumerateStatistics(from: start, to: end) { statistics, _ in
+                let hour = calendar.component(.hour, from: statistics.startDate)
+                if let avg = statistics.averageQuantity()?.doubleValue(for: unit) {
+                    byHour[hour] = avg
+                }
+            }
+            return (0...maxHour).map { hour in
+                HourlyRestingHeartRate(hour: hour, bpm: byHour[hour])
+            }
+        } catch {
+            AppLogError("查询每小时静息心率失败: \(error)")
+            return []
+        }
+    }
+
+    /// 今日每小时静息心率
+    func fetchTodayHourlyRestingHeartRate() async -> [HourlyRestingHeartRate] {
+        await fetchHourlyRestingHeartRate(for: Date())
+    }
+
+    /// 指定日期区间按天分组的静息心率。无数据的天为 nil。
+    func fetchDailyRestingHeartRate(from startDate: Date, to endDate: Date) async -> [DailyRestingHeartRate] {
+        let calendar = Calendar.current
+        let start = calendar.startOfDay(for: startDate)
+
+        guard let type = HKQuantityType.quantityType(forIdentifier: .restingHeartRate) else { return [] }
+        let predicate = HKQuery.predicateForSamples(withStart: start, end: endDate)
+        let unit = HKUnit.count().unitDivided(by: .minute())
+
+        let descriptor = HKStatisticsCollectionQueryDescriptor(
+            predicate: .quantitySample(type: type, predicate: predicate),
+            options: .discreteAverage,
+            anchorDate: start,
+            intervalComponents: DateComponents(day: 1)
+        )
+
+        do {
+            let collection = try await descriptor.result(for: healthStore)
+            var byDay: [Date: Double] = [:]
+            collection.enumerateStatistics(from: start, to: endDate) { statistics, _ in
+                let day = calendar.startOfDay(for: statistics.startDate)
+                if let avg = statistics.averageQuantity()?.doubleValue(for: unit) {
+                    byDay[day] = avg
+                }
+            }
+            var days: [DailyRestingHeartRate] = []
+            var current = start
+            while current < endDate {
+                days.append(DailyRestingHeartRate(date: current, bpm: byDay[current]))
+                guard let next = calendar.date(byAdding: .day, value: 1, to: current) else { break }
+                current = next
+            }
+            return days
+        } catch {
+            AppLogError("查询每日静息心率失败: \(error)")
+            return []
+        }
+    }
+
+    // MARK: - 心率变异性（每小时 / 每日）
+
+    /// 指定日期按小时分组的 HRV（SDNN，毫秒）。无数据的小时为 nil。
+    func fetchHourlyHeartRateVariability(for day: Date) async -> [HourlyHeartRateVariability] {
+        let calendar = Calendar.current
+        let start = calendar.startOfDay(for: day)
+        let now = Date()
+        let isToday = calendar.isDateInToday(day)
+
+        let end: Date
+        let maxHour: Int
+        if isToday {
+            end = now
+            maxHour = calendar.component(.hour, from: now)
+        } else {
+            end = calendar.date(byAdding: .day, value: 1, to: start)!
+            maxHour = 23
+        }
+
+        guard let type = HKQuantityType.quantityType(forIdentifier: .heartRateVariabilitySDNN) else { return [] }
+        let predicate = HKQuery.predicateForSamples(withStart: start, end: end)
+        let unit = HKUnit.secondUnit(with: .milli)
+
+        let descriptor = HKStatisticsCollectionQueryDescriptor(
+            predicate: .quantitySample(type: type, predicate: predicate),
+            options: .discreteAverage,
+            anchorDate: start,
+            intervalComponents: DateComponents(hour: 1)
+        )
+
+        do {
+            let collection = try await descriptor.result(for: healthStore)
+            var byHour: [Int: Double] = [:]
+            collection.enumerateStatistics(from: start, to: end) { statistics, _ in
+                let hour = calendar.component(.hour, from: statistics.startDate)
+                if let avg = statistics.averageQuantity()?.doubleValue(for: unit) {
+                    byHour[hour] = avg
+                }
+            }
+            return (0...maxHour).map { hour in
+                HourlyHeartRateVariability(hour: hour, milliseconds: byHour[hour])
+            }
+        } catch {
+            AppLogError("查询每小时 HRV 失败: \(error)")
+            return []
+        }
+    }
+
+    /// 今日每小时 HRV
+    func fetchTodayHourlyHeartRateVariability() async -> [HourlyHeartRateVariability] {
+        await fetchHourlyHeartRateVariability(for: Date())
+    }
+
+    /// 指定日期区间按天分组的 HRV（SDNN，毫秒）。无数据的天为 nil。
+    func fetchDailyHeartRateVariability(from startDate: Date, to endDate: Date) async -> [DailyHeartRateVariability] {
+        let calendar = Calendar.current
+        let start = calendar.startOfDay(for: startDate)
+
+        guard let type = HKQuantityType.quantityType(forIdentifier: .heartRateVariabilitySDNN) else { return [] }
+        let predicate = HKQuery.predicateForSamples(withStart: start, end: endDate)
+        let unit = HKUnit.secondUnit(with: .milli)
+
+        let descriptor = HKStatisticsCollectionQueryDescriptor(
+            predicate: .quantitySample(type: type, predicate: predicate),
+            options: .discreteAverage,
+            anchorDate: start,
+            intervalComponents: DateComponents(day: 1)
+        )
+
+        do {
+            let collection = try await descriptor.result(for: healthStore)
+            var byDay: [Date: Double] = [:]
+            collection.enumerateStatistics(from: start, to: endDate) { statistics, _ in
+                let day = calendar.startOfDay(for: statistics.startDate)
+                if let avg = statistics.averageQuantity()?.doubleValue(for: unit) {
+                    byDay[day] = avg
+                }
+            }
+            var days: [DailyHeartRateVariability] = []
+            var current = start
+            while current < endDate {
+                days.append(DailyHeartRateVariability(date: current, milliseconds: byDay[current]))
+                guard let next = calendar.date(byAdding: .day, value: 1, to: current) else { break }
+                current = next
+            }
+            return days
+        } catch {
+            AppLogError("查询每日 HRV 失败: \(error)")
             return []
         }
     }
