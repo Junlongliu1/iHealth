@@ -307,15 +307,15 @@ struct RunDetailView: View {
                   accent: true),
 
             .init(title: "平均心率",
-                  value: formattedInt(detail?.averageHeartRate),
+                  value: formattedHeartRate(detail?.averageHeartRate),
                   unit: detail?.averageHeartRate != nil ? "bpm" : ""),
 
             .init(title: "最大心率",
-                  value: formattedInt(detail?.maxHeartRate),
+                  value: formattedHeartRate(detail?.maxHeartRate),
                   unit: detail?.maxHeartRate != nil ? "bpm" : ""),
 
             .init(title: "平均步频",
-                  value: formattedInt(detail?.averageCadence),
+                  value: formattedCadence(detail?.averageCadence),
                   unit: detail?.averageCadence != nil ? "/min" : ""),
 
             .init(title: "平均步幅",
@@ -331,8 +331,8 @@ struct RunDetailView: View {
                   unit: detail?.activeEnergy != nil ? "kcal" : ""),
 
             .init(title: "平均功率",
-                  value: formattedInt(detail?.averagePower),
-                  unit: detail?.averagePower != nil ? "W" : "")
+                  value: formattedPower(detail?.averagePower),
+                  unit: detail?.averagePower != nil ? "W" : ""),
         ]
 
         return LazyVGrid(
@@ -374,7 +374,7 @@ struct RunDetailView: View {
                     color: .red,
                     unit: "bpm",
                     points: s.heartRate,
-                    statLabel: "平均 \(formattedInt(hr))",
+                    statLabel: "平均 \(formattedHeartRate(hr))",
                     averageValue: hr,
                     yFormat: { "\(Int($0))" }
                 )
@@ -413,9 +413,9 @@ struct RunDetailView: View {
                     color: .blue,
                     unit: "步/分",
                     points: s.cadence,
-                    statLabel: "平均 \(formattedInt(cadence))",
+                    statLabel: "平均 \(formattedCadence(cadence))",
                     averageValue: cadence,
-                    yFormat: { "\(Int($0))" }
+                    yFormat: { "\(Int($0.rounded()))" }
                 )
             }
 
@@ -604,6 +604,24 @@ struct RunDetailView: View {
         return String(Int(value))
     }
 
+    /// 心率专用：四舍五入（对齐 Apple 显示）
+    private func formattedHeartRate(_ value: Double?) -> String {
+        guard let value else { return "--" }
+        return String(Int(value.rounded()))
+    }
+
+    /// 功率专用：四舍五入（对齐 Apple 显示）
+    private func formattedPower(_ value: Double?) -> String {
+        guard let value else { return "--" }
+        return String(Int(value.rounded()))
+    }
+
+    /// 步频专用：四舍五入（对齐 Apple 显示）
+    private func formattedCadence(_ value: Double?) -> String {
+        guard let value else { return "--" }
+        return String(Int(value.rounded()))
+    }
+
     private func formattedDouble(_ value: Double?, digits: Int) -> String {
         guard let value else { return "--" }
         return String(format: "%.\(digits)f", value)
@@ -661,7 +679,7 @@ private struct MetricColumn: View {
 
 private struct VO2MaxCard: View {
     let info: VO2MaxInfo
-    
+
     @State private var showDetail = false
 
     private var deltaText: String? {
@@ -742,7 +760,7 @@ private struct VO2MaxCard: View {
                 .presentationDragIndicator(.visible)
         }
     }
-    
+
     // MARK: - VO2 Max 详情弹窗
 
     private struct VO2MaxDetailSheet: View {
@@ -1028,15 +1046,26 @@ private struct SplitsTableCard: View {
     let splits: [KilometerSplit]
 
     private var fastestIndex: Int? {
-        splits.min(by: { $0.duration < $1.duration })?.index
+        splits
+            .filter { $0.distance >= 1000 }   // 只在完整公里里找最快
+            .min(by: { splitPace($0) < splitPace($1) })?
+            .index
     }
 
-    private let colIndex: CGFloat = 44
-    private let colPace: CGFloat = 68
-    private let colHR: CGFloat = 52
-    private let colStride: CGFloat = 52
-    private let colCadence: CGFloat = 52
-    private let colPower: CGFloat = 52
+    /// 按 split 实际距离计算配速（秒/公里）
+    private func splitPace(_ split: KilometerSplit) -> Double {
+        let km = split.distance / 1000
+        guard km > 0.01 else { return .infinity }
+        return split.duration / km
+    }
+
+    // 列宽
+    private let colIndex: CGFloat = 46
+    private let colPace: CGFloat = 70
+    private let colHR: CGFloat = 50
+    private let colStride: CGFloat = 50
+    private let colCadence: CGFloat = 50
+    private let colPower: CGFloat = 50
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -1047,8 +1076,9 @@ private struct SplitsTableCard: View {
                 .padding(.top, 14)
                 .padding(.bottom, 12)
 
+            // 表头
             HStack(spacing: 0) {
-                headerCell("序号", width: colIndex)
+                headerCell("序号", width: colIndex, alignment: .leading)
                 headerCell("配速", width: colPace)
                 headerCell("心率", width: colHR)
                 headerCell("步幅", width: colStride)
@@ -1058,14 +1088,12 @@ private struct SplitsTableCard: View {
             .padding(.horizontal, 12)
             .padding(.bottom, 6)
 
+            // 数据行
             VStack(spacing: 0) {
                 ForEach(Array(splits.enumerated()), id: \.element.id) { idx, split in
-                    rowView(split: split, isFastest: split.index == fastestIndex)
-                        .background(
-                            idx % 2 == 1
-                                ? Color.primary.opacity(0.03)
-                                : Color.clear
-                        )
+                    rowView(split: split,
+                            isFastest: split.index == fastestIndex,
+                            isOdd: idx % 2 == 1)
                 }
             }
             .padding(.bottom, 8)
@@ -1078,59 +1106,81 @@ private struct SplitsTableCard: View {
         }
     }
 
-    private func headerCell(_ text: String, width: CGFloat) -> some View {
+    // MARK: 表头
+
+    private func headerCell(_ text: String,
+                            width: CGFloat,
+                            alignment: Alignment = .trailing) -> some View {
         Text(text)
-            .font(.system(size: 13))
+            .font(.system(size: 12))
             .foregroundStyle(.tertiary)
-            .frame(width: width, alignment: .center)
+            .frame(width: width, alignment: alignment)
     }
 
-    private func rowView(split: KilometerSplit, isFastest: Bool) -> some View {
+    // MARK: 数据行
+
+    private func rowView(split: KilometerSplit,
+                         isFastest: Bool,
+                         isOdd: Bool) -> some View {
         HStack(spacing: 0) {
+            // 序号 + 最快标签
             HStack(spacing: 4) {
                 Text("\(split.index)")
-                    .font(.system(size: 14))
+                    .font(.system(size: 14, weight: isFastest ? .semibold : .regular))
                     .foregroundStyle(isFastest ? .primary : .secondary)
                     .monospacedDigit()
-                    .frame(minWidth: 16)
+                    .frame(minWidth: 16, alignment: .leading)
 
                 if isFastest {
                     Text("最快")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(.orange)
-                        .padding(.horizontal, 5)
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 4)
                         .padding(.vertical, 1)
-                        .background(Capsule().fill(Color.orange.opacity(0.15)))
+                        .background(Capsule().fill(Color.orange))
                 }
             }
             .frame(width: colIndex, alignment: .leading)
 
-            valueCell(formatPace(split.duration), width: colPace, primary: true)
+            // 数值列
+            valueCell(formatSplitPace(split), width: colPace, primary: true)
             valueCell(formatInt(split.averageHeartRate), width: colHR)
             valueCell(formatStride(split.averageStrideLength), width: colStride)
             valueCell(formatInt(split.averageCadence), width: colCadence)
             valueCell(formatInt(split.averagePower), width: colPower)
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 10)
+        .padding(.vertical, 11)
+        .background(
+            isFastest
+                ? Color.orange.opacity(0.08)
+                : (isOdd ? Color.primary.opacity(0.03) : Color.clear)
+        )
     }
 
-    private func valueCell(_ text: String, width: CGFloat, primary: Bool = false) -> some View {
+    private func valueCell(_ text: String,
+                           width: CGFloat,
+                           primary: Bool = false) -> some View {
         Text(text)
             .font(.system(size: 14, weight: primary ? .semibold : .regular))
             .foregroundStyle(primary ? .primary : .secondary)
             .monospacedDigit()
-            .frame(width: width, alignment: .center)
+            .frame(width: width, alignment: .trailing)
+            .padding(.trailing, 4)
     }
 
-    private func formatPace(_ seconds: TimeInterval) -> String {
-        let total = Int(seconds.rounded())
+    // MARK: 格式化
+
+    private func formatSplitPace(_ split: KilometerSplit) -> String {
+        let pace = splitPace(split)
+        guard pace.isFinite, pace > 0 else { return "--" }
+        let total = Int(pace.rounded())
         return String(format: "%d'%02d\"", total / 60, total % 60)
     }
 
     private func formatInt(_ value: Double?) -> String {
         guard let value else { return "--" }
-        return String(Int(value))
+        return String(Int(value.rounded()))
     }
 
     private func formatStride(_ meters: Double?) -> String {

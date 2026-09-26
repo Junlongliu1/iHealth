@@ -16,14 +16,10 @@ final class WorkoutStore {
     var isLoading = false
     var errorMessage: String?
 
-    /// 每公里分段缓存（按 Workout.id）
     var splitsCache: [UUID: [KilometerSplit]] = [:]
-    /// 个人最好成绩
     var personalBests: [PersonalBest] = []
-    /// 是否已经加载过分段
     private var hasLoadedSplits = false
 
-    // 只读取，不写入
     private var typesToRead: Set<HKObjectType> {
         var set: Set<HKObjectType> = [HKObjectType.workoutType()]
 
@@ -48,15 +44,15 @@ final class WorkoutStore {
             }
         }
 
-        // 用户特征（用于 VO2 Max 分级）
+        set.insert(HKSeriesType.workoutRoute())
+
         if let dob = HKObjectType.characteristicType(forIdentifier: .dateOfBirth) {
             set.insert(dob)
         }
         if let sex = HKObjectType.characteristicType(forIdentifier: .biologicalSex) {
             set.insert(sex)
         }
-        
-        set.insert(HKSeriesType.workoutRoute())
+
         return set
     }
 
@@ -69,10 +65,7 @@ final class WorkoutStore {
         }
 
         do {
-            try await healthStore.requestAuthorization(
-                toShare: [],
-                read: typesToRead
-            )
+            try await healthStore.requestAuthorization(toShare: [], read: typesToRead)
         } catch {
             errorMessage = "授权失败：\(error.localizedDescription)"
         }
@@ -108,11 +101,10 @@ final class WorkoutStore {
             healthStore.execute(query)
         }
 
-        let mapped = hkWorkouts.map { Workout(hkWorkout: $0) }
-        self.workouts = mapped
+        self.workouts = hkWorkouts.map { Workout(hkWorkout: $0) }
     }
 
-    // MARK: - 跑步详情查询（静态，供 RunDetailView 直接调用）
+    // MARK: - 跑步详情查询
 
     static func loadRunDetail(
         for workout: Workout,
@@ -121,18 +113,35 @@ final class WorkoutStore {
         guard let hkWorkout = await fetchHKWorkout(
             uuid: workout.id,
             healthStore: healthStore
-        ) else {
-            return nil
+        ) else { return nil }
+
+        let activeSegments = extractActiveSegments(from: hkWorkout)
+
+        // MARK: 平均配速
+        var averagePace: TimeInterval?
+
+        if let speedQuantity = hkWorkout.metadata?[HKMetadataKeyAverageSpeed] as? HKQuantity {
+            let speedMS = speedQuantity.doubleValue(
+                for: .meter().unitDivided(by: .second())
+            )
+            if speedMS > 0.1 {
+                averagePace = 1000.0 / speedMS
+            }
         }
 
-        var averagePace: TimeInterval?
-        if let distance = workout.distance, distance > 0 {
-            averagePace = hkWorkout.duration / (distance / 1000)
+        if averagePace == nil,
+           let distance = workout.distance, distance > 0 {
+            let activeTime: TimeInterval
+            if activeSegments.isEmpty {
+                activeTime = hkWorkout.duration
+            } else {
+                activeTime = activeSegments.reduce(0.0) { $0 + $1.duration }
+            }
+            averagePace = activeTime / (distance / 1000)
         }
 
         let bpm = HKUnit.count().unitDivided(by: .minute())
-        let heartRateType = HKQuantityType(.heartRate)
-        let hrStats = hkWorkout.statistics(for: heartRateType)
+        let hrStats = hkWorkout.statistics(for: HKQuantityType(.heartRate))
         let avgHR = hrStats?.averageQuantity()?.doubleValue(for: bpm)
         let maxHR = hrStats?.maximumQuantity()?.doubleValue(for: bpm)
 
@@ -167,82 +176,27 @@ final class WorkoutStore {
         let vertical = hkWorkout.statistics(for: HKQuantityType(.runningVerticalOscillation))?
             .averageQuantity()?.doubleValue(for: .meterUnit(with: .centi))
 
-        // 取原始 WGS-84 轨迹 → 过滤 → 转 GCJ-02
-        let rawLocations = await fetchRawRoute(
-            for: hkWorkout,
-            healthStore: healthStore
-        )
+        let rawLocations = await fetchRawRoute(for: hkWorkout, healthStore: healthStore)
         let filtered = filterLocations(rawLocations)
         let route = filtered.map { CoordinateConverter.wgs84ToGcj02($0.coordinate) }
         let markers = computeKilometerMarkers(from: route)
         let sourceName = hkWorkout.sourceRevision.source.name
 
-        // ★ 并行拉取 8 条时间序列
-        async let heartRateSeries = Self.fetchSeries(
-            for: hkWorkout,
-            quantityType: HKQuantityType(.heartRate),
-            unit: bpm,
-            healthStore: healthStore,
-            options: .discreteAverage
-        )
+        // 时间序列（图表用）
+        async let heartRateSeries = Self.fetchSeries(for: hkWorkout, quantityType: HKQuantityType(.heartRate), unit: bpm, healthStore: healthStore, options: .discreteAverage)
+        async let speedSeries = Self.fetchSeries(for: hkWorkout, quantityType: HKQuantityType(.runningSpeed), unit: HKUnit.meter().unitDivided(by: .second()), healthStore: healthStore, options: .discreteAverage, transform: { $0 > 0.5 ? 1000.0 / $0 : 0 })
+        async let strideSeries = Self.fetchSeries(for: hkWorkout, quantityType: HKQuantityType(.runningStrideLength), unit: .meter(), healthStore: healthStore, options: .discreteAverage)
+        async let cadenceSeries = Self.fetchSeries(for: hkWorkout, quantityType: HKQuantityType(.stepCount), unit: .count(), healthStore: healthStore, options: .cumulativeSum)
+        async let gctSeries = Self.fetchSeries(for: hkWorkout, quantityType: HKQuantityType(.runningGroundContactTime), unit: .secondUnit(with: .milli), healthStore: healthStore, options: .discreteAverage)
+        async let voSeries = Self.fetchSeries(for: hkWorkout, quantityType: HKQuantityType(.runningVerticalOscillation), unit: .meterUnit(with: .centi), healthStore: healthStore, options: .discreteAverage)
+        async let powerSeries = Self.fetchSeries(for: hkWorkout, quantityType: HKQuantityType(.runningPower), unit: .watt(), healthStore: healthStore, options: .discreteAverage)
 
-        async let speedSeries = Self.fetchSeries(
-            for: hkWorkout,
-            quantityType: HKQuantityType(.runningSpeed),
-            unit: HKUnit.meter().unitDivided(by: .second()),
-            healthStore: healthStore,
-            options: .discreteAverage,
-            transform: { $0 > 0.5 ? 1000.0 / $0 : 0 }   // 米/秒 → 秒/公里
-        )
-
-        async let strideSeries = Self.fetchSeries(
-            for: hkWorkout,
-            quantityType: HKQuantityType(.runningStrideLength),
-            unit: .meter(),
-            healthStore: healthStore,
-            options: .discreteAverage
-        )
-
-        async let cadenceSeries = Self.fetchSeries(
-            for: hkWorkout,
-            quantityType: HKQuantityType(.stepCount),
-            unit: .count(),
-            healthStore: healthStore,
-            options: .cumulativeSum
-        )
-
-        async let gctSeries = Self.fetchSeries(
-            for: hkWorkout,
-            quantityType: HKQuantityType(.runningGroundContactTime),
-            unit: .secondUnit(with: .milli),
-            healthStore: healthStore,
-            options: .discreteAverage
-        )
-
-        async let voSeries = Self.fetchSeries(
-            for: hkWorkout,
-            quantityType: HKQuantityType(.runningVerticalOscillation),
-            unit: .meterUnit(with: .centi),
-            healthStore: healthStore,
-            options: .discreteAverage
-        )
-
-        async let powerSeries = Self.fetchSeries(
-            for: hkWorkout,
-            quantityType: HKQuantityType(.runningPower),
-            unit: .watt(),
-            healthStore: healthStore,
-            options: .discreteAverage
-        )
-
-        // 海拔：从过滤后的 GPS 点取高度，每 30 秒一个点
         let elevationSeries: [MetricPoint] = {
             var points: [MetricPoint] = []
             var lastKept: Date = .distantPast
             for loc in filtered where loc.verticalAccuracy >= 0 {
                 if loc.timestamp.timeIntervalSince(lastKept) >= 30 {
-                    points.append(MetricPoint(date: loc.timestamp,
-                                              value: loc.altitude))
+                    points.append(MetricPoint(date: loc.timestamp, value: loc.altitude))
                     lastKept = loc.timestamp
                 }
             }
@@ -260,15 +214,51 @@ final class WorkoutStore {
             elevation: elevationSeries
         )
 
-        // ★ 每公里分段详情
-        let officialDist = workout.distance ?? 0
-        let rawSplits = computeSplits(
-            from: filtered,
-            officialDistance: officialDist > 0 ? officialDist : nil
-        )
-        let splits = attachSplitDetails(splits: rawSplits, series: series)
+        // splits 原始样本
+        async let hrRaw = Self.fetchRawSamples(for: hkWorkout, quantityType: HKQuantityType(.heartRate), unit: bpm, healthStore: healthStore)
+        async let strideRaw = Self.fetchRawSamples(for: hkWorkout, quantityType: HKQuantityType(.runningStrideLength), unit: .meter(), healthStore: healthStore)
+        async let powerRaw = Self.fetchRawSamples(for: hkWorkout, quantityType: HKQuantityType(.runningPower), unit: .watt(), healthStore: healthStore)
+        async let speedRaw = Self.fetchRawSamples(for: hkWorkout, quantityType: HKQuantityType(.runningSpeed), unit: HKUnit.meter().unitDivided(by: .second()), healthStore: healthStore)
+        async let distanceRaw = Self.fetchRawDistanceSamples(for: hkWorkout, healthStore: healthStore)
+        async let cadenceRaw = Self.fetchRawStepSamples(for: hkWorkout, healthStore: healthStore)
 
-        // ★ VO2 Max
+        let officialDist = workout.distance ?? 0
+        let rawSplits: [KilometerSplit]
+
+        if let lapSplits = extractLapSplits(from: hkWorkout, officialDistance: officialDist) {
+            rawSplits = lapSplits
+        } else {
+            rawSplits = computeSplits(
+                from: filtered,
+                officialDistance: officialDist > 0 ? officialDist : nil,
+                workoutStartDate: hkWorkout.startDate,
+                workoutEndDate: hkWorkout.endDate,
+                activeSegments: activeSegments,
+                speedSamples: await speedRaw,
+                distanceSamples: await distanceRaw
+            )
+        }
+
+        // 第 1 段起点对齐修正：-3s
+        var adjustedSplits = rawSplits
+        if let first = adjustedSplits.first, first.index == 1 {
+            adjustedSplits[0] = KilometerSplit(
+                index: first.index,
+                distance: first.distance,
+                duration: max(0, first.duration - 3),
+                startDate: first.startDate
+            )
+        }
+
+        let splits = attachSplitDetails(
+            splits: adjustedSplits,
+            activeSegments: activeSegments,
+            heartRate: await hrRaw,
+            strideLength: await strideRaw,
+            stepCount: await cadenceRaw,
+            power: await powerRaw
+        )
+
         let vo2 = await fetchVO2Max(for: hkWorkout, healthStore: healthStore)
 
         return RunDetail(
@@ -293,7 +283,7 @@ final class WorkoutStore {
         )
     }
 
-    // MARK: - 每公里分段加载（PB 用）
+    // MARK: - PB splits 加载
 
     func loadAllRunSplits() async {
         guard !hasLoadedSplits else { return }
@@ -301,10 +291,6 @@ final class WorkoutStore {
         let runningRuns = workouts.filter {
             $0.type == .running && ($0.distance ?? 0) >= 1_000
         }
-
-        #if DEBUG
-        print("📊 [PB] 待加载 splits 的跑步数量:", runningRuns.count)
-        #endif
 
         guard !runningRuns.isEmpty else {
             hasLoadedSplits = true
@@ -319,14 +305,10 @@ final class WorkoutStore {
         ) { group in
             for workout in runningRuns {
                 group.addTask {
-                    let splits = await WorkoutStore.loadSplits(
-                        for: workout,
-                        healthStore: store
-                    )
+                    let splits = await WorkoutStore.loadSplits(for: workout, healthStore: store)
                     return (workout.id, splits)
                 }
             }
-
             var dict: [UUID: [KilometerSplit]] = [:]
             for await (id, splits) in group {
                 dict[id] = splits
@@ -336,32 +318,11 @@ final class WorkoutStore {
 
         splitsCache = results
         hasLoadedSplits = true
-
-        #if DEBUG
-        for workout in runningRuns {
-            let splits = results[workout.id] ?? []
-            let dist = workout.distance.map { String(format: "%.2f", $0 / 1000) } ?? "?"
-            let paces = splits.map { Int($0.duration.rounded()) }
-            print("📊 [PB] \(dist)km → \(splits.count) splits: \(paces)")
-        }
-
-        let totalSplits = results.values.reduce(0) { $0 + $1.count }
-        print("📊 [PB] 加载完成 splits 总数:", totalSplits)
-        #endif
     }
 
     func computePersonalBests() {
         let runningRuns = workouts.filter { $0.type == .running }
-        personalBests = PBEngine.compute(
-            workouts: runningRuns,
-            splitsCache: splitsCache
-        )
-
-        #if DEBUG
-        print("📊 [PB] 计算结果:", personalBests.map {
-            "\($0.label): \($0.time.map { String(format: "%.0f", $0) } ?? "nil")"
-        })
-        #endif
+        personalBests = PBEngine.compute(workouts: runningRuns, splitsCache: splitsCache)
     }
 
     func resetSplits() {
@@ -370,7 +331,7 @@ final class WorkoutStore {
         personalBests = []
     }
 
-    // MARK: - 私有：加载单次跑步的 splits
+    // MARK: - 私有：单次 splits（PB 用）
 
     private static func loadSplits(
         for workout: Workout,
@@ -378,34 +339,47 @@ final class WorkoutStore {
     ) async -> [KilometerSplit] {
         guard workout.type == .running else { return [] }
 
-        guard let hkWorkout = await fetchHKWorkout(
-            uuid: workout.id,
-            healthStore: healthStore
-        ) else { return [] }
+        guard let hkWorkout = await fetchHKWorkout(uuid: workout.id, healthStore: healthStore) else { return [] }
 
-        let locations = await fetchRawRoute(
-            for: hkWorkout,
-            healthStore: healthStore
-        )
+        let officialDistance = workout.distance ?? 0
+        if let lapSplits = extractLapSplits(from: hkWorkout, officialDistance: officialDistance),
+           lapSplits.count >= 2 {
+            return lapSplits
+        }
+
+        let locations = await fetchRawRoute(for: hkWorkout, healthStore: healthStore)
         guard locations.count >= 2 else { return [] }
-
         let filtered = filterLocations(locations)
         guard filtered.count >= 2 else { return [] }
 
-        let officialDistance = workout.distance ?? 0
+        let activeSegments = extractActiveSegments(from: hkWorkout)
+        let speedSamples = await fetchRawSamples(
+            for: hkWorkout,
+            quantityType: HKQuantityType(.runningSpeed),
+            unit: HKUnit.meter().unitDivided(by: .second()),
+            healthStore: healthStore
+        )
+        let distanceSamples = await fetchRawDistanceSamples(
+            for: hkWorkout,
+            healthStore: healthStore
+        )
+
         return computeSplits(
             from: filtered,
-            officialDistance: officialDistance > 0 ? officialDistance : nil
+            officialDistance: officialDistance > 0 ? officialDistance : nil,
+            workoutStartDate: hkWorkout.startDate,
+            workoutEndDate: hkWorkout.endDate,
+            activeSegments: activeSegments,
+            speedSamples: speedSamples,
+            distanceSamples: distanceSamples
         )
     }
 
     /// 精度 + 速度过滤
-    private static func filterLocations(
-        _ locations: [CLLocation]
-    ) -> [CLLocation] {
+    private static func filterLocations(_ locations: [CLLocation]) -> [CLLocation] {
         var filtered: [CLLocation] = []
         var lastKept: CLLocation?
-        let maxSpeed: Double = 12.0   // 43 km/h 上限
+        let maxSpeed: Double = 12.0
 
         for location in locations {
             guard location.horizontalAccuracy >= 0,
@@ -421,7 +395,6 @@ final class WorkoutStore {
             guard dt > 0 else { continue }
 
             let distance = location.distance(from: last)
-
             if distance < 3 {
                 filtered.append(location)
                 lastKept = location
@@ -438,99 +411,341 @@ final class WorkoutStore {
         return filtered
     }
 
-    /// 从带时间戳的轨迹点计算每 1km 分段
+    /// 提取活动段
+    private static func extractActiveSegments(
+        from hkWorkout: HKWorkout
+    ) -> [DateInterval] {
+        guard let events = hkWorkout.workoutEvents else { return [] }
+
+        let segments = events
+            .filter { $0.type == .segment }
+            .map { $0.dateInterval }
+            .sorted { $0.start < $1.start }
+
+        var merged: [DateInterval] = []
+        for seg in segments {
+            if let last = merged.last, seg.start <= last.end {
+                merged[merged.count - 1] = DateInterval(
+                    start: last.start,
+                    end: max(last.end, seg.end)
+                )
+            } else {
+                merged.append(seg)
+            }
+        }
+
+        return merged
+    }
+
+    /// 从轨迹 / 距离样本 / 速度样本计算每公里分段
     private static func computeSplits(
         from locations: [CLLocation],
-        officialDistance: Double?
+        officialDistance: Double?,
+        workoutStartDate: Date,
+        workoutEndDate: Date,
+        activeSegments: [DateInterval] = [],
+        speedSamples: [MetricPoint] = [],
+        distanceSamples: [MetricPoint] = []
     ) -> [KilometerSplit] {
         guard locations.count >= 2 else { return [] }
 
-        let startTime = locations[0].timestamp
+        let startDate = workoutStartDate
+        let endDate = workoutEndDate
 
-        var cumDist: [Double] = [0]
-        var cumTime: [TimeInterval] = [0]
+        var curve: [(date: Date, cumDist: Double)] = []
 
-        for i in 1..<locations.count {
-            let prev = locations[i - 1]
-            let curr = locations[i]
-            let dt = curr.timestamp.timeIntervalSince(prev.timestamp)
-            guard dt > 0 else { continue }
-            let segment = curr.distance(from: prev)
-            cumDist.append(cumDist.last! + segment)
-            cumTime.append(cumTime.last! + dt)
+        // 1a. distanceWalkingRunning 原始样本（首选）
+        if distanceSamples.count >= 30 {
+            curve = [(startDate, 0)]
+            var cum: Double = 0
+            for sample in distanceSamples {
+                cum += sample.value
+                curve.append((sample.date, cum))
+            }
+            if let lastDate = curve.last?.date, lastDate < endDate {
+                curve.append((endDate, cum))
+            }
+
+            if let official = officialDistance, let total = curve.last?.cumDist, total > 100 {
+                let scale = official / total
+                curve = curve.map { ($0.date, $0.cumDist * scale) }
+            }
         }
 
-        let routeTotalDist = cumDist.last ?? 0
-        guard routeTotalDist >= 500 else { return [] }
+        // 1b. runningSpeed 积分（次选）
+        if curve.count < 30, speedSamples.count >= 10 {
+            curve = [(startDate, 0)]
+            var cum: Double = 0
+            for i in 1..<speedSamples.count {
+                let prev = speedSamples[i - 1]
+                let curr = speedSamples[i]
+                let dt = curr.date.timeIntervalSince(prev.date)
+                guard dt > 0, dt < 10 else {
+                    curve.append((curr.date, cum))
+                    continue
+                }
+                cum += (prev.value + curr.value) / 2 * dt
+                curve.append((curr.date, cum))
+            }
+            if let lastDate = curve.last?.date, lastDate < endDate {
+                curve.append((endDate, cum))
+            }
 
-        let segmentMeters: Double
-        if let official = officialDistance, official > 0 {
-            segmentMeters = 1000.0 * (routeTotalDist / official)
-        } else {
-            segmentMeters = 1000.0
+            if let official = officialDistance, let total = curve.last?.cumDist, total > 100 {
+                let scale = official / total
+                curve = curve.map { ($0.date, $0.cumDist * scale) }
+            }
         }
+
+        // 1c. GPS 累加（兜底）
+        if curve.count < 30 {
+            curve = [(startDate, 0)]
+            var cum: Double = 0
+            for i in 1..<locations.count {
+                cum += locations[i].distance(from: locations[i - 1])
+                curve.append((locations[i].timestamp, cum))
+            }
+            if let lastDate = curve.last?.date, lastDate < endDate {
+                curve.append((endDate, cum))
+            }
+
+            if let official = officialDistance, let total = curve.last?.cumDist, total > 100 {
+                let scale = official / total
+                curve = curve.map { ($0.date, $0.cumDist * scale) }
+            }
+        }
+
+        let totalDist = curve.last?.cumDist ?? 0
+        guard totalDist >= 500 else { return [] }
+
+        func dateAtDistance(_ target: Double) -> Date? {
+            guard let last = curve.last, last.cumDist >= target else { return nil }
+
+            var lo = 0
+            var hi = curve.count - 1
+            while lo < hi {
+                let mid = (lo + hi) / 2
+                if curve[mid].cumDist < target {
+                    lo = mid + 1
+                } else {
+                    hi = mid
+                }
+            }
+
+            guard lo > 0 else { return curve[0].date }
+
+            let d0 = curve[lo - 1].cumDist
+            let d1 = curve[lo].cumDist
+            let t0 = curve[lo - 1].date
+            let t1 = curve[lo].date
+            let ratio = (d1 - d0) > 0 ? (target - d0) / (d1 - d0) : 0
+            return t0.addingTimeInterval(t1.timeIntervalSince(t0) * ratio)
+        }
+
+        let hasSegments = !activeSegments.isEmpty
+        func activeDuration(from a: Date, to b: Date) -> TimeInterval {
+            guard b > a else { return 0 }
+            if !hasSegments {
+                return b.timeIntervalSince(a)
+            }
+            var total: TimeInterval = 0
+            for seg in activeSegments {
+                let s = max(a, seg.start)
+                let e = min(b, seg.end)
+                if e > s {
+                    total += e.timeIntervalSince(s)
+                }
+            }
+            return total
+        }
+
+        let officialTotal = officialDistance ?? totalDist
+        let fullKmCount = Int(officialTotal / 1000)
+        let tailMeters = officialTotal - Double(fullKmCount) * 1000
+        let hasTail = tailMeters >= 100
 
         var splits: [KilometerSplit] = []
-        var kmIndex = 1
-        var splitStartDist: Double = 0
-        var splitStartTime: TimeInterval = 0
+        var prevDate = startDate
 
-        while splitStartDist + segmentMeters <= routeTotalDist {
-            let targetDist = splitStartDist + segmentMeters
+        for km in 1...max(fullKmCount, 1) {
+            guard km <= fullKmCount else { break }
 
-            var idx = 1
-            while idx < cumDist.count && cumDist[idx] < targetDist {
-                idx += 1
-            }
-            guard idx < cumDist.count else { break }
+            let targetDist = Double(km) * 1000
+            guard let cutDate = dateAtDistance(targetDist) else { break }
 
-            let d0 = cumDist[idx - 1], d1 = cumDist[idx]
-            let t0 = cumTime[idx - 1], t1 = cumTime[idx]
-            let ratio = (d1 - d0) > 0 ? (targetDist - d0) / (d1 - d0) : 0
-            let targetTime = t0 + (t1 - t0) * ratio
-
+            let dur = activeDuration(from: prevDate, to: cutDate)
             splits.append(KilometerSplit(
-                index: kmIndex,
+                index: km,
                 distance: 1000,
-                duration: targetTime - splitStartTime,
-                startDate: startTime.addingTimeInterval(splitStartTime)
+                duration: dur,
+                startDate: prevDate
             ))
+            prevDate = cutDate
+        }
 
-            kmIndex += 1
-            splitStartDist = targetDist
-            splitStartTime = targetTime
+        if hasTail {
+            let dur = activeDuration(from: prevDate, to: endDate)
+            if dur > 0 {
+                splits.append(KilometerSplit(
+                    index: fullKmCount + 1,
+                    distance: tailMeters,
+                    duration: dur,
+                    startDate: prevDate
+                ))
+            }
         }
 
         return splits
     }
 
-    /// 按每公里的时间窗口，从时间序列里聚合出心率 / 步幅 / 步频 / 功率
+    /// lap events
+    private static func extractLapSplits(
+        from hkWorkout: HKWorkout,
+        officialDistance: Double
+    ) -> [KilometerSplit]? {
+        guard let events = hkWorkout.workoutEvents else { return nil }
+
+        let laps = events
+            .filter { $0.type == .lap }
+            .sorted { $0.dateInterval.start < $1.dateInterval.start }
+
+        guard laps.count >= 2 else { return nil }
+
+        let lapTotal = laps.reduce(0.0) { $0 + $1.dateInterval.duration }
+        guard lapTotal > hkWorkout.duration * 0.6 else { return nil }
+
+        let expectedKm = Int(officialDistance / 1000)
+        guard abs(laps.count - expectedKm) <= 1 else { return nil }
+
+        return laps.enumerated().map { idx, lap in
+            KilometerSplit(
+                index: idx + 1,
+                distance: 1000,
+                duration: lap.dateInterval.duration,
+                startDate: lap.dateInterval.start
+            )
+        }
+    }
+
+    /// 聚合每公里的平均指标
     private static func attachSplitDetails(
         splits: [KilometerSplit],
-        series: RunSeries
+        activeSegments: [DateInterval],
+        heartRate: [MetricPoint],
+        strideLength: [MetricPoint],
+        stepCount: [MetricPoint],
+        power: [MetricPoint]
     ) -> [KilometerSplit] {
-        splits.map { split in
+        splits.enumerated().map { (i, split) in
             var s = split
             let start = split.startDate
-            let end = start.addingTimeInterval(split.duration)
 
-            s.averageHeartRate = average(series.heartRate, from: start, to: end)
-            s.averageStrideLength = average(series.strideLength, from: start, to: end)
-            s.averageCadence = average(series.cadence, from: start, to: end)
-            s.averagePower = average(series.power, from: start, to: end)
+            // 墙钟结束时间：下一段的 startDate；尾段用 start + duration
+            let wallClockEnd: Date = {
+                if i + 1 < splits.count {
+                    return splits[i + 1].startDate
+                }
+                return start.addingTimeInterval(split.duration)
+            }()
+
+            s.averageHeartRate = mean(
+                samples(heartRate, from: start, to: wallClockEnd,
+                        activeSegments: activeSegments)
+            )
+            s.averageStrideLength = mean(
+                samples(strideLength, from: start, to: wallClockEnd,
+                        activeSegments: activeSegments)
+            )
+            s.averagePower = mean(
+                samples(power, from: start, to: wallClockEnd,
+                        activeSegments: activeSegments)
+            )
+
+            // 步频：按时间比例加权分摊边界样本
+            let steps = weightedSum(
+                stepCount,
+                from: start,
+                to: wallClockEnd,
+                activeSegments: activeSegments
+            )
+            let activeMinutes = split.duration / 60
+            s.averageCadence = activeMinutes > 0.01
+                ? steps / activeMinutes
+                : nil
 
             return s
         }
     }
 
-    private static func average(
+    /// 过滤出 [start, end) 内、且落在活动段中的样本
+    private static func samples(
         _ points: [MetricPoint],
         from start: Date,
-        to end: Date
-    ) -> Double? {
-        let inRange = points.filter { $0.date >= start && $0.date < end }
-        guard !inRange.isEmpty else { return nil }
-        return inRange.map(\.value).reduce(0, +) / Double(inRange.count)
+        to end: Date,
+        activeSegments: [DateInterval]
+    ) -> [MetricPoint] {
+        let hasSegments = !activeSegments.isEmpty
+        return points.filter { pt in
+            guard pt.date >= start, pt.date < end else { return false }
+            if !hasSegments { return true }
+            return activeSegments.contains { $0.contains(pt.date) }
+        }
+    }
+
+    /// 算术平均；空集返回 nil
+    private static func mean(_ points: [MetricPoint]) -> Double? {
+        guard !points.isEmpty else { return nil }
+        return points.map(\.value).reduce(0, +) / Double(points.count)
+    }
+
+    /// 求和
+    private static func sumValues(_ points: [MetricPoint]) -> Double {
+        points.map(\.value).reduce(0, +)
+    }
+
+    /// 按时间比例加权的步数求和
+    private static func weightedSum(
+        _ points: [MetricPoint],
+        from start: Date,
+        to end: Date,
+        activeSegments: [DateInterval]
+    ) -> Double {
+        let hasSegments = !activeSegments.isEmpty
+
+        let windowSegments: [DateInterval]
+        if hasSegments {
+            windowSegments = activeSegments.compactMap { seg in
+                let s = max(start, seg.start)
+                let e = min(end, seg.end)
+                return e > s ? DateInterval(start: s, end: e) : nil
+            }
+        } else {
+            windowSegments = [DateInterval(start: start, end: end)]
+        }
+
+        let totalWindowDuration = windowSegments.reduce(0.0) { $0 + $1.duration }
+        guard totalWindowDuration > 0 else { return 0 }
+
+        var total: Double = 0
+        for pt in points {
+            let sampleDuration: TimeInterval = 3.0
+            let sampleStart = pt.date
+            let sampleEnd = pt.date.addingTimeInterval(sampleDuration)
+
+            var overlap: TimeInterval = 0
+            for ws in windowSegments {
+                let s = max(sampleStart, ws.start)
+                let e = min(sampleEnd, ws.end)
+                if e > s { overlap += e.timeIntervalSince(s) }
+            }
+
+            guard overlap > 0 else { continue }
+
+            let ratio = overlap / sampleDuration
+            total += pt.value * ratio
+        }
+
+        return total
     }
 
     // MARK: - 私有辅助（HealthKit fetch）
@@ -553,7 +768,6 @@ final class WorkoutStore {
         }
     }
 
-    /// 返回原始 WGS-84 轨迹，不做过滤、不做坐标转换
     private static func fetchRawRoute(
         for workout: HKWorkout,
         healthStore: HKHealthStore
@@ -587,7 +801,6 @@ final class WorkoutStore {
         }
     }
 
-    /// 用 HKStatisticsCollectionQuery 拉取某指标的时间序列（默认 60 秒一聚合）
     private static func fetchSeries(
         for hkWorkout: HKWorkout,
         quantityType: HKQuantityType,
@@ -619,10 +832,8 @@ final class WorkoutStore {
                 }
 
                 var points: [MetricPoint] = []
-                results.enumerateStatistics(
-                    from: hkWorkout.startDate,
-                    to: hkWorkout.endDate
-                ) { stats, _ in
+                results.enumerateStatistics(from: hkWorkout.startDate,
+                                            to: hkWorkout.endDate) { stats, _ in
                     let quantity: HKQuantity?
                     if options.contains(.discreteAverage) {
                         quantity = stats.averageQuantity()
@@ -646,35 +857,144 @@ final class WorkoutStore {
             healthStore.execute(query)
         }
     }
-    
-    /// 读取用户年龄和生物性别；任一缺失则返回 nil
+
+    private static func fetchRawSamples(
+        for hkWorkout: HKWorkout,
+        quantityType: HKQuantityType,
+        unit: HKUnit,
+        healthStore: HKHealthStore,
+        transform: @escaping (Double) -> Double = { $0 }
+    ) async -> [MetricPoint] {
+        let predicate = HKQuery.predicateForSamples(
+            withStart: hkWorkout.startDate,
+            end: hkWorkout.endDate,
+            options: .strictStartDate
+        )
+
+        return await withCheckedContinuation { continuation in
+            let query = HKSampleQuery(
+                sampleType: quantityType,
+                predicate: predicate,
+                limit: HKObjectQueryNoLimit,
+                sortDescriptors: [
+                    NSSortDescriptor(key: HKSampleSortIdentifierStartDate,
+                                     ascending: true)
+                ]
+            ) { _, samples, _ in
+                let points: [MetricPoint] = (samples as? [HKQuantitySample])?
+                    .compactMap { sample in
+                        let raw = sample.quantity.doubleValue(for: unit)
+                        let value = transform(raw)
+                        guard value.isFinite, value > 0 else { return nil }
+                        return MetricPoint(date: sample.startDate, value: value)
+                    } ?? []
+                continuation.resume(returning: points)
+            }
+            healthStore.execute(query)
+        }
+    }
+
+    /// 拉取 distanceWalkingRunning 原始段落样本（同源过滤 + 用 endDate）
+    private static func fetchRawDistanceSamples(
+        for hkWorkout: HKWorkout,
+        healthStore: HKHealthStore
+    ) async -> [MetricPoint] {
+        let type = HKQuantityType(.distanceWalkingRunning)
+
+        let timePredicate = HKQuery.predicateForSamples(
+            withStart: hkWorkout.startDate,
+            end: hkWorkout.endDate,
+            options: .strictStartDate
+        )
+        let source = hkWorkout.sourceRevision.source
+        let sourcePredicate = HKQuery.predicateForObjects(from: source)
+
+        let combined = NSCompoundPredicate(andPredicateWithSubpredicates: [
+            timePredicate, sourcePredicate
+        ])
+
+        return await withCheckedContinuation { continuation in
+            let query = HKSampleQuery(
+                sampleType: type,
+                predicate: combined,
+                limit: HKObjectQueryNoLimit,
+                sortDescriptors: [
+                    NSSortDescriptor(key: HKSampleSortIdentifierEndDate,
+                                     ascending: true)
+                ]
+            ) { _, samples, _ in
+                let points: [MetricPoint] = (samples as? [HKQuantitySample])?
+                    .compactMap { sample in
+                        let meters = sample.quantity.doubleValue(for: .meter())
+                        guard meters.isFinite, meters > 0 else { return nil }
+                        return MetricPoint(date: sample.endDate, value: meters)
+                    } ?? []
+
+                continuation.resume(returning: points)
+            }
+            healthStore.execute(query)
+        }
+    }
+
+    /// 拉取 stepCount 原始样本（同源过滤）
+    private static func fetchRawStepSamples(
+        for hkWorkout: HKWorkout,
+        healthStore: HKHealthStore
+    ) async -> [MetricPoint] {
+        let type = HKQuantityType(.stepCount)
+
+        let timePredicate = HKQuery.predicateForSamples(
+            withStart: hkWorkout.startDate,
+            end: hkWorkout.endDate,
+            options: .strictStartDate
+        )
+        let source = hkWorkout.sourceRevision.source
+        let sourcePredicate = HKQuery.predicateForObjects(from: source)
+
+        let combined = NSCompoundPredicate(andPredicateWithSubpredicates: [
+            timePredicate, sourcePredicate
+        ])
+
+        return await withCheckedContinuation { continuation in
+            let query = HKSampleQuery(
+                sampleType: type,
+                predicate: combined,
+                limit: HKObjectQueryNoLimit,
+                sortDescriptors: [
+                    NSSortDescriptor(key: HKSampleSortIdentifierStartDate,
+                                     ascending: true)
+                ]
+            ) { _, samples, _ in
+                let points: [MetricPoint] = (samples as? [HKQuantitySample])?
+                    .compactMap { sample in
+                        let count = sample.quantity.doubleValue(for: .count())
+                        guard count.isFinite, count > 0 else { return nil }
+                        return MetricPoint(date: sample.startDate, value: count)
+                    } ?? []
+
+                continuation.resume(returning: points)
+            }
+            healthStore.execute(query)
+        }
+    }
+
     private static func fetchUserProfile(
         healthStore: HKHealthStore
     ) -> (age: Int, sex: HKBiologicalSex)? {
-        // 出生日期
         guard let dob = try? healthStore.dateOfBirthComponents(),
               let birthDate = Calendar.current.date(from: dob) else {
             return nil
         }
-
-        let age = Calendar.current.dateComponents(
-            [.year], from: birthDate, to: Date()
-        ).year ?? 0
-
+        let age = Calendar.current.dateComponents([.year], from: birthDate, to: Date()).year ?? 0
         guard age > 0 else { return nil }
 
-        // 生物性别
-        guard let sexObject = try? healthStore.biologicalSex() else {
-            return nil
-        }
+        guard let sexObject = try? healthStore.biologicalSex() else { return nil }
         let sex = sexObject.biologicalSex
         guard sex == .male || sex == .female else { return nil }
 
         return (age, sex)
     }
-    
 
-    /// 查询某次跑步相关的 VO2 Max，并按年龄/性别计算苹果健康分级
     private static func fetchVO2Max(
         for hkWorkout: HKWorkout,
         healthStore: HKHealthStore
@@ -683,7 +1003,6 @@ final class WorkoutStore {
         let unit = HKUnit.literUnit(with: .milli)
             .unitDivided(by: HKUnit.gramUnit(with: .kilo).unitMultiplied(by: .minute()))
 
-        // ① 当前：workout 结束时间 ±1 小时内最新一条
         let currentPredicate = HKQuery.predicateForSamples(
             withStart: hkWorkout.endDate.addingTimeInterval(-3600),
             end: hkWorkout.endDate.addingTimeInterval(3600),
@@ -695,10 +1014,7 @@ final class WorkoutStore {
                 sampleType: type,
                 predicate: currentPredicate,
                 limit: 1,
-                sortDescriptors: [
-                    NSSortDescriptor(key: HKSampleSortIdentifierStartDate,
-                                     ascending: false)
-                ]
+                sortDescriptors: [NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: false)]
             ) { _, samples, _ in
                 continuation.resume(returning: (samples as? [HKQuantitySample]) ?? [])
             }
@@ -708,7 +1024,6 @@ final class WorkoutStore {
         guard let current = currentSamples.first else { return nil }
         let value = current.quantity.doubleValue(for: unit)
 
-        // ② 上一次：早于 current.startDate 的最新一条
         let prevPredicate = HKQuery.predicateForSamples(
             withStart: nil,
             end: current.startDate.addingTimeInterval(-1),
@@ -720,10 +1035,7 @@ final class WorkoutStore {
                 sampleType: type,
                 predicate: prevPredicate,
                 limit: 1,
-                sortDescriptors: [
-                    NSSortDescriptor(key: HKSampleSortIdentifierStartDate,
-                                     ascending: false)
-                ]
+                sortDescriptors: [NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: false)]
             ) { _, samples, _ in
                 continuation.resume(returning: (samples as? [HKQuantitySample]) ?? [])
             }
@@ -733,7 +1045,6 @@ final class WorkoutStore {
         let previous = prevSamples.first?.quantity.doubleValue(for: unit)
         let delta = previous.map { value - $0 }
 
-        // ③ 按年龄/性别分类
         var classification: VO2MaxClassification?
         var age: Int?
         var sex: HKBiologicalSex?
@@ -742,15 +1053,8 @@ final class WorkoutStore {
         if let profile = fetchUserProfile(healthStore: healthStore) {
             age = profile.age
             sex = profile.sex
-            classification = VO2MaxClassification.classify(
-                value: value,
-                age: profile.age,
-                sex: profile.sex
-            )
-            thresholds = VO2MaxClassification.thresholdsFor(
-                age: profile.age,
-                sex: profile.sex
-            )
+            classification = VO2MaxClassification.classify(value: value, age: profile.age, sex: profile.sex)
+            thresholds = VO2MaxClassification.thresholdsFor(age: profile.age, sex: profile.sex)
         }
 
         return VO2MaxInfo(
@@ -777,27 +1081,19 @@ final class WorkoutStore {
         var index: Int = 1
 
         for i in 1..<route.count {
-            let prev = CLLocation(latitude: route[i - 1].latitude,
-                                  longitude: route[i - 1].longitude)
-            let curr = CLLocation(latitude: route[i].latitude,
-                                  longitude: route[i].longitude)
+            let prev = CLLocation(latitude: route[i - 1].latitude, longitude: route[i - 1].longitude)
+            let curr = CLLocation(latitude: route[i].latitude, longitude: route[i].longitude)
             let segment = curr.distance(from: prev)
 
-            while segment > 0,
-                  accumulated + segment >= nextTarget,
-                  nextTarget <= 500_000 {
-
+            while segment > 0, accumulated + segment >= nextTarget, nextTarget <= 500_000 {
                 let remaining = nextTarget - accumulated
                 let ratio = remaining / segment
-                let lat = route[i - 1].latitude
-                        + (route[i].latitude - route[i - 1].latitude) * ratio
-                let lon = route[i - 1].longitude
-                        + (route[i].longitude - route[i - 1].longitude) * ratio
+                let lat = route[i - 1].latitude + (route[i].latitude - route[i - 1].latitude) * ratio
+                let lon = route[i - 1].longitude + (route[i].longitude - route[i - 1].longitude) * ratio
 
                 markers.append(KilometerMarker(
                     id: index,
-                    coordinate: CLLocationCoordinate2D(latitude: lat,
-                                                       longitude: lon)
+                    coordinate: CLLocationCoordinate2D(latitude: lat, longitude: lon)
                 ))
                 index += 1
                 nextTarget += 1000
@@ -807,18 +1103,6 @@ final class WorkoutStore {
 
         return markers
     }
-
-    #if DEBUG
-    /// 仅用于调试：累加轨迹点之间的球面距离
-    private static func routeTotalDistance(of locations: [CLLocation]) -> Double {
-        guard locations.count >= 2 else { return 0 }
-        var total: Double = 0
-        for i in 1..<locations.count {
-            total += locations[i].distance(from: locations[i - 1])
-        }
-        return total
-    }
-    #endif
 }
 
 // MARK: - Preview / 测试注入
