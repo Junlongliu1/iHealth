@@ -293,7 +293,7 @@ extension VO2MaxClassification {
         default:                  return .high
         }
     }
-    
+
     /// 按年龄段和性别返回三个阈值（Low 上界、Below Average 上界、High 下界）
     static func thresholdsFor(
         age: Int,
@@ -325,6 +325,7 @@ extension VO2MaxClassification {
         }
     }
 }
+
 // MARK: - 跑步详情数据
 
 struct RunDetail {
@@ -349,27 +350,6 @@ struct RunDetail {
     var series: RunSeries = RunSeries()
     var vo2Max: VO2MaxInfo? = nil
     var splits: [KilometerSplit] = []
-}
-
-// MARK: - 公里分段
-
-/// 一次跑步的每 1 公里分段
-struct KilometerSplit: Identifiable, Hashable {
-    var id: Int { index }
-    /// 第几公里（1-based）
-    let index: Int
-    /// 该段距离（米），标准为 1000
-    let distance: Double
-    /// 该段用时（秒）
-    let duration: TimeInterval
-    /// 该段起始时间
-    let startDate: Date
-
-    // MARK: 该段的聚合指标（PB 计算不使用这些字段）
-    var averageHeartRate: Double? = nil
-    var averageStrideLength: Double? = nil   // 米
-    var averageCadence: Double? = nil        // 步/分钟
-    var averagePower: Double? = nil          // 瓦
 }
 
 // MARK: - 个人最好成绩
