@@ -15,7 +15,6 @@ struct RunHeroMapView: View {
 
     @State private var camera: MapCameraPosition = .automatic
 
-    /// 用于触发相机更新的稳定 key（轨迹点数变化 = 数据到位）
     private var routeKey: Int { route.count }
 
     var body: some View {
@@ -23,16 +22,30 @@ struct RunHeroMapView: View {
             if isLoading {
                 Color(.secondarySystemBackground)
             } else {
-                Map(position: $camera,
-                    interactionModes: [.pan, .zoom, .rotate, .pitch]) {
-                    routeOverlay
-                }
-                .mapStyle(.standard(elevation: .realistic,
-                                    pointsOfInterest: .excludingAll))
-                .mapControls {
-                    MapCompass()
-                    MapScaleView()
-                    MapPitchToggle()
+                ZStack(alignment: .bottom) {
+                    Map(position: $camera,
+                        interactionModes: [.pan, .zoom, .rotate, .pitch]) {
+                        routeOverlay
+                    }
+                    .mapStyle(.standard(elevation: .realistic,
+                                        pointsOfInterest: .excludingAll))
+                    .mapControls {
+                        MapCompass()
+                        MapScaleView()
+                        MapPitchToggle()
+                    }
+
+                    // 底部渐变：让内容卡片浮出更自然
+                    LinearGradient(
+                        colors: [
+                            .clear,
+                            Color(.systemBackground).opacity(0.55)
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                    .frame(height: 110)
+                    .allowsHitTesting(false)
                 }
             }
         }
@@ -46,12 +59,14 @@ struct RunHeroMapView: View {
     @MapContentBuilder
     private var routeOverlay: some MapContent {
         if route.count >= 2 {
+            // 描边阴影
             MapPolyline(coordinates: route)
-                .stroke(Color.orange.opacity(0.22),
-                        style: StrokeStyle(lineWidth: 7,
+                .stroke(Color.orange.opacity(0.20),
+                        style: StrokeStyle(lineWidth: 8,
                                            lineCap: .round,
                                            lineJoin: .round))
 
+            // 主线渐变
             MapPolyline(coordinates: route)
                 .stroke(
                     .runGradient,
@@ -60,32 +75,37 @@ struct RunHeroMapView: View {
                                        lineJoin: .round)
                 )
 
+            // 起点标记
             if let start = route.first {
                 Annotation("", coordinate: start, anchor: .center) {
                     ZStack {
-                        Circle().fill(.white).frame(width: 16, height: 16)
+                        Circle()
+                            .fill(.white)
+                            .frame(width: 20, height: 20)
+                            .shadow(color: .black.opacity(0.20),
+                                    radius: 4, y: 1)
                         Circle()
                             .fill(Color(red: 0.4, green: 0.85, blue: 0.4))
-                            .frame(width: 10, height: 10)
+                            .frame(width: 12, height: 12)
                     }
-                    .shadow(color: .black.opacity(0.2), radius: 2, y: 1)
                 }
             }
 
+            // 公里标记
             ForEach(kilometerMarkers) { marker in
                 Annotation("", coordinate: marker.coordinate, anchor: .center) {
                     ZStack {
                         Circle()
-                            .fill(Color.black.opacity(0.85))
-                            .frame(width: 20, height: 20)
+                            .fill(.black.opacity(0.75))
+                            .frame(width: 22, height: 22)
                         Circle()
-                            .stroke(Color.white.opacity(0.4), lineWidth: 1)
-                            .frame(width: 20, height: 20)
+                            .stroke(Color.white.opacity(0.55), lineWidth: 1)
+                            .frame(width: 22, height: 22)
                         Text("\(marker.id)")
                             .font(.system(size: 10, weight: .bold, design: .rounded))
                             .foregroundStyle(.white)
                     }
-                    .shadow(color: .black.opacity(0.3), radius: 2, y: 1)
+                    .shadow(color: .black.opacity(0.30), radius: 4, y: 1)
                 }
             }
         }

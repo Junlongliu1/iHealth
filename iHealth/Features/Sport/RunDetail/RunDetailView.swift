@@ -6,10 +6,6 @@
 //
 
 import SwiftUI
-import MapKit
-import CoreLocation
-import Charts
-import HealthKit
 
 struct RunDetailView: View {
     let workout: Workout
@@ -25,7 +21,7 @@ struct RunDetailView: View {
         GeometryReader { proxy in
             let topSafeArea = proxy.safeAreaInsets.top
             let heroHeight = max(proxy.size.height * 0.55, 420)
-            let overlap: CGFloat = 30
+            let overlap: CGFloat = 36
 
             ZStack(alignment: .top) {
 
@@ -69,7 +65,7 @@ struct RunDetailView: View {
                 RunTopBar(
                     onBack: { dismiss() },
                     onShare: { shareRoute() },
-                    onMore: { /* TODO: 更多操作 */ },
+                    onMore: { /* TODO */ },
                     namespace: glassNamespace
                 )
             }
@@ -93,7 +89,7 @@ struct RunDetailView: View {
         VStack(alignment: .leading, spacing: 0) {
 
             Capsule()
-                .fill(Color.primary.opacity(0.18))
+                .fill(Color.primary.opacity(0.16))
                 .frame(width: 36, height: 5)
                 .frame(maxWidth: .infinity)
                 .padding(.top, 10)
@@ -102,10 +98,10 @@ struct RunDetailView: View {
             RunSummaryHeader(detail: detail, workout: workout)
 
             Rectangle()
-                .fill(Color.primary.opacity(0.06))
-                .frame(height: 0.8)
+                .fill(Color.primary.opacity(0.05))
+                .frame(height: 0.5)
                 .padding(.horizontal, 20)
-                .padding(.vertical, 16)
+                .padding(.vertical, 18)
 
             RunMetricsGrid(detail: detail)
                 .padding(.horizontal, 16)
@@ -118,18 +114,18 @@ struct RunDetailView: View {
         .frame(maxWidth: .infinity)
         .background {
             UnevenRoundedRectangle(
-                topLeadingRadius: 32,
-                topTrailingRadius: 32,
+                topLeadingRadius: 36,
+                topTrailingRadius: 36,
                 style: .continuous
             )
             .fill(Color(.systemBackground))
-            .shadow(color: .black.opacity(0.10), radius: 24, x: 0, y: -8)
+            .shadow(color: .black.opacity(0.14), radius: 30, x: 0, y: -12)
             .ignoresSafeArea(edges: .bottom)
         }
         .overlay(alignment: .top) {
             UnevenRoundedRectangle(
-                topLeadingRadius: 32,
-                topTrailingRadius: 32,
+                topLeadingRadius: 36,
+                topTrailingRadius: 36,
                 style: .continuous
             )
             .stroke(Color.primary.opacity(0.06), lineWidth: 0.5)
@@ -142,18 +138,15 @@ struct RunDetailView: View {
     private var detailCards: some View {
         let s = detail?.series ?? RunSeries()
 
-        return VStack(spacing: 12) {
-            // ★ VO2 Max 卡片
+        return VStack(spacing: 14) {
             if let vo2 = detail?.vo2Max {
                 VO2MaxCard(info: vo2)
             }
 
-            // ★ 公里分段卡片
             if let splits = detail?.splits, !splits.isEmpty {
                 SplitsTableCard(splits: splits)
             }
 
-            // —— 图表卡片 ——
             if let hr = detail?.averageHeartRate {
                 RunMetricChartCard(
                     title: "心率",
@@ -258,7 +251,7 @@ struct RunDetailView: View {
                     color: .orange,
                     unit: "m",
                     points: s.elevation,
-                    statLabel: "最大 \(Int(maxV)) 最小 \(Int(minV)) 平均 \(String(format: "%.1f", avgV))",
+                    statLabel: "最大 \(Int(maxV)) 最小 \(Int(minV))",
                     secondStatLabel: "↑\(RunDetailFormat.int(elev))m",
                     averageValue: avgV,
                     yFormat: { "\(Int($0))" }
@@ -276,7 +269,6 @@ struct RunDetailView: View {
 
 enum RunDetailFormat {
 
-    /// "1:23:45" / "23:45"
     static func duration(_ d: TimeInterval?) -> String {
         guard let d else { return "--" }
         let total = Int(d)
@@ -288,38 +280,32 @@ enum RunDetailFormat {
             : String(format: "%d:%02d", m, s)
     }
 
-    /// "5'20\""
     static func pace(_ p: TimeInterval?) -> String {
         guard let p, p.isFinite, p > 0 else { return "--" }
         let total = Int(p.rounded())
         return String(format: "%d'%02d\"", total / 60, total % 60)
     }
 
-    /// 供图表轴标注使用
     static func paceShort(_ seconds: Double) -> String {
         let total = Int(seconds.rounded())
         return String(format: "%d'%02d\"", total / 60, total % 60)
     }
 
-    /// 取整
     static func int(_ v: Double?) -> String {
         guard let v else { return "--" }
         return String(Int(v))
     }
 
-    /// 心率：四舍五入
     static func heartRate(_ v: Double?) -> String {
         guard let v else { return "--" }
         return String(Int(v.rounded()))
     }
 
-    /// 功率：四舍五入
     static func power(_ v: Double?) -> String {
         guard let v else { return "--" }
         return String(Int(v.rounded()))
     }
 
-    /// 步频：四舍五入
     static func cadence(_ v: Double?) -> String {
         guard let v else { return "--" }
         return String(Int(v.rounded()))

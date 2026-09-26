@@ -6,8 +6,6 @@
 import SwiftUI
 import Charts
 
-// MARK: - 单项指标图表卡片（心率 / 配速 / 步幅 / 步频 / 触地 / 垂直 / 功率 / 海拔）
-
 struct RunMetricChartCard: View {
     let title: String
     let icon: String
@@ -45,16 +43,19 @@ struct RunMetricChartCard: View {
         return 30
     }
 
+    private var maxValue: Double? { points.map(\.value).max() }
+    private var minValue: Double? { points.map(\.value).min() }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
             chart
-                .frame(height: 120)
+                .frame(height: 130)
             hint
         }
-        .background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: 18))
+        .background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: 20))
         .overlay {
-            RoundedRectangle(cornerRadius: 18)
+            RoundedRectangle(cornerRadius: 20)
                 .stroke(Color.primary.opacity(0.05), lineWidth: 0.5)
         }
     }
@@ -68,18 +69,24 @@ struct RunMetricChartCard: View {
                         .font(.system(size: 14, weight: .semibold))
                         .foregroundStyle(color)
                 }
-                .frame(width: 30, height: 30)
+                .frame(width: 32, height: 32)
 
-                Text("\(title) (\(unit))")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(.primary)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(.primary)
+
+                    Text(unit)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.tertiary)
+                }
             }
 
             Spacer(minLength: 8)
 
-            VStack(alignment: .trailing, spacing: 2) {
+            VStack(alignment: .trailing, spacing: 3) {
                 Text(statLabel)
-                    .font(.system(size: 13))
+                    .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
 
@@ -88,11 +95,21 @@ struct RunMetricChartCard: View {
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(.green)
                         .monospacedDigit()
+                } else if let mx = maxValue, let mn = minValue,
+                          mx > mn {
+                    HStack(spacing: 4) {
+                        Text("↓\(yFormat(mn))")
+                            .foregroundStyle(.tertiary)
+                        Text("↑\(yFormat(mx))")
+                            .foregroundStyle(.tertiary)
+                    }
+                    .font(.system(size: 11))
+                    .monospacedDigit()
                 }
             }
         }
         .padding(.horizontal, 16)
-        .padding(.top, 10)
+        .padding(.top, 12)
         .padding(.bottom, 8)
     }
 
@@ -105,7 +122,7 @@ struct RunMetricChartCard: View {
                 )
                 .foregroundStyle(
                     LinearGradient(
-                        colors: [color.opacity(0.22), color.opacity(0.02)],
+                        colors: [color.opacity(0.24), color.opacity(0.02)],
                         startPoint: .top,
                         endPoint: .bottom
                     )
@@ -118,7 +135,7 @@ struct RunMetricChartCard: View {
                 )
                 .foregroundStyle(color)
                 .interpolationMethod(.catmullRom)
-                .lineStyle(StrokeStyle(lineWidth: 1.5, lineCap: .round))
+                .lineStyle(StrokeStyle(lineWidth: 1.8, lineCap: .round))
             }
 
             if let avg = averageValue {

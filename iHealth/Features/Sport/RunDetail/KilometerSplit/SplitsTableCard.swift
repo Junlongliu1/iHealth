@@ -5,11 +5,9 @@
 
 import SwiftUI
 
-/// 公里分段表格卡片
 struct SplitsTableCard: View {
     let splits: [KilometerSplit]
 
-    /// 完整公里里配速最快的一段索引
     private var fastestIndex: Int? {
         splits
             .filter(\.isFullKilometer)
@@ -17,7 +15,6 @@ struct SplitsTableCard: View {
             .index
     }
 
-    // 列宽
     private let colIndex:   CGFloat = 46
     private let colPace:    CGFloat = 70
     private let colHR:      CGFloat = 50
@@ -27,14 +24,22 @@ struct SplitsTableCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("公里分段")
-                .font(.system(size: 16, weight: .semibold))
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 16)
-                .padding(.top, 14)
-                .padding(.bottom, 12)
+            HStack(spacing: 6) {
+                Text("公里分段")
+                    .font(.system(size: 16, weight: .semibold))
 
-            // 表头
+                Spacer()
+
+                if let idx = fastestIndex {
+                    Text("第 \(idx) 段最快")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 16)
+            .padding(.bottom, 12)
+
             HStack(spacing: 0) {
                 headerCell("序号", width: colIndex, alignment: .leading)
                 headerCell("配速", width: colPace)
@@ -46,7 +51,6 @@ struct SplitsTableCard: View {
             .padding(.horizontal, 12)
             .padding(.bottom, 6)
 
-            // 数据行
             VStack(spacing: 0) {
                 ForEach(Array(splits.enumerated()), id: \.element.id) { idx, split in
                     rowView(
@@ -59,14 +63,12 @@ struct SplitsTableCard: View {
             .padding(.bottom, 8)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: 18))
+        .background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: 20))
         .overlay {
-            RoundedRectangle(cornerRadius: 18)
+            RoundedRectangle(cornerRadius: 20)
                 .stroke(Color.primary.opacity(0.05), lineWidth: 0.5)
         }
     }
-
-    // MARK: 表头
 
     private func headerCell(
         _ text: String,
@@ -78,8 +80,6 @@ struct SplitsTableCard: View {
             .foregroundStyle(.tertiary)
             .frame(width: width, alignment: alignment)
     }
-
-    // MARK: 数据行
 
     private func rowView(
         split: KilometerSplit,
@@ -100,7 +100,7 @@ struct SplitsTableCard: View {
                         .foregroundStyle(.white)
                         .padding(.horizontal, 4)
                         .padding(.vertical, 1)
-                        .background(Capsule().fill(Color.orange))
+                        .background(Capsule().fill(.runGradient))
                 }
             }
             .frame(width: colIndex, alignment: .leading)
@@ -115,8 +115,8 @@ struct SplitsTableCard: View {
         .padding(.vertical, 11)
         .background(
             isFastest
-                ? Color.orange.opacity(0.08)
-                : (isOdd ? Color.primary.opacity(0.03) : Color.clear)
+                ? Color.orange.opacity(0.07)
+                : (isOdd ? Color.primary.opacity(0.025) : Color.clear)
         )
     }
 

@@ -21,51 +21,58 @@ struct VO2MaxCard: View {
     private var isPositive: Bool { (info.delta ?? 0) >= 0 }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("最大摄氧量")
-                .font(.system(size: 16, weight: .semibold))
+        VStack(alignment: .leading, spacing: 16) {
+            HStack {
+                Text("最大摄氧量")
+                    .font(.system(size: 16, weight: .semibold))
 
-            HStack(alignment: .center, spacing: 8) {
+                Spacer()
+
+                if let level = info.classification {
+                    Text(level.rawValue)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(level.color)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 4)
+                        .background(Capsule().fill(level.color.opacity(0.12)))
+                }
+            }
+
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text(String(format: "%.2f", info.value))
-                    .font(.system(size: 36, weight: .bold, design: .rounded))
+                    .font(.system(size: 40, weight: .bold, design: .rounded))
                     .foregroundStyle(Color(red: 0.20, green: 0.55, blue: 0.95))
                     .monospacedDigit()
+
+                Text("ml/(kg·min)")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.tertiary)
 
                 Spacer(minLength: 8)
 
                 if let text = deltaText {
                     HStack(alignment: .firstTextBaseline, spacing: 2) {
+                        Image(systemName: isPositive ? "arrow.up" : "arrow.down")
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundStyle(isPositive ? Color.green : Color.red)
                         Text(text)
-                            .font(.system(size: 22, weight: .bold, design: .rounded))
+                            .font(.system(size: 20, weight: .bold, design: .rounded))
                             .foregroundStyle(isPositive ? Color.green : Color.red)
                             .monospacedDigit()
-                        Image(systemName: isPositive ? "arrow.up" : "arrow.down")
-                            .font(.system(size: 14, weight: .bold))
-                            .foregroundStyle(isPositive ? Color.green : Color.red)
-                        Button {
-                            showDetail = true
-                        } label: {
-                            Image(systemName: "questionmark.circle")
-                                .font(.system(size: 14))
-                                .foregroundStyle(.tertiary)
-                        }
-                        .buttonStyle(.plain)
                     }
                 }
             }
 
-            HStack(spacing: 8) {
-                if let level = info.classification {
-                    Text(level.rawValue)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(level.color)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 4)
-                        .background(
-                            Capsule().fill(level.color.opacity(0.12))
-                        )
-                }
+            // ★ 区间指示条
+            if let thresholds = info.thresholds {
+                VO2RangeBar(
+                    value: info.value,
+                    thresholds: thresholds,
+                    classification: info.classification
+                )
+            }
 
+            HStack(spacing: 8) {
                 if deltaText != nil {
                     Text("较上次")
                         .font(.system(size: 12, weight: .medium))
@@ -76,19 +83,116 @@ struct VO2MaxCard: View {
                 }
 
                 Spacer()
+
+                Button {
+                    showDetail = true
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "questionmark.circle")
+                        Text("了解分级")
+                    }
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
             }
         }
-        .padding(16)
+        .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: 18))
+        .background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: 20))
         .overlay {
-            RoundedRectangle(cornerRadius: 18)
+            RoundedRectangle(cornerRadius: 20)
                 .stroke(Color.primary.opacity(0.05), lineWidth: 0.5)
         }
         .sheet(isPresented: $showDetail) {
             VO2MaxDetailSheet(info: info)
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
+        }
+    }
+}
+
+// MARK: - 区间指示条
+
+private struct VO2RangeBar: View {
+    let value: Double
+    let thresholds: VO2MaxThresholds
+    let classification: VO2MaxClassification?
+
+    /// 展示范围：low 下限往下留一点，high 上限往上留一点
+    private var displayRange: (min: Double, max: Double) {
+        let low = max(0, thresholds.low - 8)
+        let high = thresholds.high + 8
+        return (low, high)
+    }
+
+    private func ratio(_ v: Double) -> Double {
+        let r = displayRange
+        guard r.max > r.min else { return 0.5 }
+        let x = (v - r.min) / (r.max - r.min)
+        return min(max(x, 0), 1)
+    }
+
+    var body: some View {
+        VStack(spacing: 6) {
+            GeometryReader { geo in
+                let w = geo.size.width
+
+                ZStack(alignment: .leading) {
+                    // 四段色条
+                    HStack(spacing: 0) {
+                        Rectangle()
+                            .fill(Color.red.opacity(0.75))
+                            .frame(width: w * CGFloat(
+                                (thresholds.low - displayRange.min) /
+                                (displayRange.max - displayRange.min)
+                            ))
+                        Rectangle()
+                            .fill(Color.orange.opacity(0.75))
+                            .frame(width: w * CGFloat(
+                                (thresholds.belowAvg - thresholds.low) /
+                                (displayRange.max - displayRange.min)
+                            ))
+                        Rectangle()
+                            .fill(Color.green.opacity(0.75))
+                            .frame(width: w * CGFloat(
+                                (thresholds.high - thresholds.belowAvg) /
+                                (displayRange.max - displayRange.min)
+                            ))
+                        Rectangle()
+                            .fill(Color.blue.opacity(0.75))
+                    }
+                    .frame(height: 8)
+                    .clipShape(Capsule())
+
+                    // 当前值标记
+                    let x = w * CGFloat(ratio(value))
+                    Circle()
+                        .fill(.white)
+                        .frame(width: 14, height: 14)
+                        .overlay(Circle().stroke(Color.black.opacity(0.15), lineWidth: 0.5))
+                        .shadow(color: .black.opacity(0.20), radius: 2, y: 1)
+                        .offset(x: x - 7)
+                }
+                .frame(height: 14)
+            }
+            .frame(height: 14)
+
+            // 刻度标注
+            HStack {
+                Text("\(Int(displayRange.min))")
+                Spacer()
+                Text("\(Int(thresholds.low))")
+                Spacer()
+                Text("\(Int(thresholds.belowAvg))")
+                Spacer()
+                Text("\(Int(thresholds.high))")
+                Spacer()
+                Text("\(Int(displayRange.max))")
+            }
+            .font(.system(size: 9))
+            .foregroundStyle(.tertiary)
+            .monospacedDigit()
         }
     }
 }
@@ -105,10 +209,8 @@ private struct VO2MaxDetailSheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
 
-                    // ① 当前状态
                     currentStatusSection
 
-                    // ② 年龄段标准
                     if let thresholds = info.thresholds,
                        let age = info.age,
                        let sex = info.sex {
@@ -119,7 +221,6 @@ private struct VO2MaxDetailSheet: View {
                         noProfileSection
                     }
 
-                    // ③ 对比记录
                     if let prev = info.previousValue {
                         comparisonSection(previous: prev)
                     } else {
@@ -138,8 +239,6 @@ private struct VO2MaxDetailSheet: View {
             }
         }
     }
-
-    // MARK: ① 当前状态
 
     private var currentStatusSection: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -174,8 +273,6 @@ private struct VO2MaxDetailSheet: View {
         .background(Color(.secondarySystemBackground),
                     in: RoundedRectangle(cornerRadius: 14))
     }
-
-    // MARK: ② 年龄段标准
 
     private func standardsSection(
         thresholds: VO2MaxThresholds,
@@ -268,8 +365,6 @@ private struct VO2MaxDetailSheet: View {
         }
     }
 
-    // MARK: 无用户资料
-
     private var noProfileSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("年龄段标准")
@@ -289,8 +384,6 @@ private struct VO2MaxDetailSheet: View {
         .background(Color(.secondarySystemBackground),
                     in: RoundedRectangle(cornerRadius: 14))
     }
-
-    // MARK: ③ 对比记录
 
     private func comparisonSection(previous: Double) -> some View {
         VStack(alignment: .leading, spacing: 10) {

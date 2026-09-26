@@ -7,7 +7,6 @@ import SwiftUI
 
 // MARK: - 顶部浮动玻璃工具栏
 
-/// 跑步详情页顶部浮动工具栏：返回、分享、更多、标题
 struct RunTopBar: View {
     let onBack: () -> Void
     let onShare: () -> Void
@@ -27,7 +26,7 @@ struct RunTopBar: View {
                         .contentShape(Circle())
                 }
                 .buttonStyle(.plain)
-                .glassEffect(.regular, in: .circle)
+                .glassEffect(.regular.interactive(), in: .circle)
                 .glassEffectID("back", in: namespace)
             }
 
@@ -61,7 +60,7 @@ struct RunTopBar: View {
                     }
                     .buttonStyle(.plain)
                 }
-                .glassEffect(.regular, in: .capsule)
+                .glassEffect(.regular.interactive(), in: .capsule)
                 .glassEffectID("actions", in: namespace)
             }
         }
@@ -69,7 +68,7 @@ struct RunTopBar: View {
         .padding(.top, 6)
         .overlay {
             Text("iHealth")
-                .font(.system(size: 17, weight: .semibold, design: .rounded))
+                .font(.system(size: 16, weight: .semibold, design: .rounded))
                 .foregroundStyle(
                     LinearGradient(
                         colors: [
@@ -99,8 +98,8 @@ struct RunSummaryHeader: View {
             VStack(alignment: .leading, spacing: 8) {
                 HStack(alignment: .firstTextBaseline, spacing: 5) {
                     Text(bigDistanceValue)
-                        .font(.system(size: 46, weight: .heavy, design: .rounded))
-                        .foregroundStyle(.primary)
+                        .font(.system(size: 48, weight: .heavy, design: .rounded))
+                        .foregroundStyle(.runGradient)
                         .monospacedDigit()
                         .contentTransition(.numericText())
 
@@ -137,8 +136,13 @@ struct RunSummaryHeader: View {
 
             Spacer(minLength: 0)
 
-            VStack(spacing: 4) {
+            VStack(spacing: 5) {
                 ZStack {
+                    Circle()
+                        .fill(Color(red: 0.98, green: 0.75, blue: 0.4).opacity(0.35))
+                        .frame(width: 52, height: 52)
+                        .blur(radius: 6)
+
                     Circle()
                         .fill(LinearGradient(
                             colors: [
@@ -148,13 +152,14 @@ struct RunSummaryHeader: View {
                             startPoint: .topLeading,
                             endPoint: .bottomTrailing
                         ))
+
                     Image(systemName: "person.fill")
                         .font(.system(size: 19, weight: .medium))
                         .foregroundStyle(.white)
                 }
                 .frame(width: 46, height: 46)
                 .overlay(Circle().stroke(.white, lineWidth: 2))
-                .shadow(color: .black.opacity(0.08), radius: 5, y: 2)
+                .shadow(color: .black.opacity(0.10), radius: 6, y: 2)
 
                 Text("Evron")
                     .font(.system(size: 10))
@@ -188,57 +193,71 @@ struct RunSummaryHeader: View {
     }
 }
 
-// MARK: - 九宫格指标
+// MARK: - 九宫格指标（居中）
 
 struct RunMetricsGrid: View {
     let detail: RunDetail?
 
     var body: some View {
-        let items: [MetricItem] = [
-            .init(title: "运动时间",
-                  value: RunDetailFormat.duration(detail?.duration),
-                  unit: ""),
-
-            .init(title: "平均配速",
-                  value: RunDetailFormat.pace(detail?.averagePace),
-                  unit: detail?.averagePace != nil ? "/km" : "",
-                  accent: true),
-
-            .init(title: "平均心率",
-                  value: RunDetailFormat.heartRate(detail?.averageHeartRate),
-                  unit: detail?.averageHeartRate != nil ? "bpm" : ""),
-
-            .init(title: "最大心率",
-                  value: RunDetailFormat.heartRate(detail?.maxHeartRate),
-                  unit: detail?.maxHeartRate != nil ? "bpm" : ""),
-
-            .init(title: "平均步频",
-                  value: RunDetailFormat.cadence(detail?.averageCadence),
-                  unit: detail?.averageCadence != nil ? "/min" : ""),
-
-            .init(title: "平均步幅",
-                  value: strideValue,
-                  unit: detail?.averageStrideLength != nil ? "cm" : ""),
-
-            .init(title: "累计上升",
-                  value: RunDetailFormat.int(detail?.elevationAscended),
-                  unit: detail?.elevationAscended != nil ? "m" : ""),
-
-            .init(title: "消耗能量",
-                  value: RunDetailFormat.int(detail?.activeEnergy),
-                  unit: detail?.activeEnergy != nil ? "kcal" : ""),
-
-            .init(title: "平均功率",
-                  value: RunDetailFormat.power(detail?.averagePower),
-                  unit: detail?.averagePower != nil ? "W" : ""),
+        let rows: [[MetricItem]] = [
+            [
+                .init(title: "运动时间",
+                      value: RunDetailFormat.duration(detail?.duration),
+                      unit: ""),
+                .init(title: "平均配速",
+                      value: RunDetailFormat.pace(detail?.averagePace),
+                      unit: detail?.averagePace != nil ? "/km" : "",
+                      accent: true),
+                .init(title: "平均心率",
+                      value: RunDetailFormat.heartRate(detail?.averageHeartRate),
+                      unit: detail?.averageHeartRate != nil ? "bpm" : ""),
+            ],
+            [
+                .init(title: "最大心率",
+                      value: RunDetailFormat.heartRate(detail?.maxHeartRate),
+                      unit: detail?.maxHeartRate != nil ? "bpm" : ""),
+                .init(title: "平均步频",
+                      value: RunDetailFormat.cadence(detail?.averageCadence),
+                      unit: detail?.averageCadence != nil ? "/min" : ""),
+                .init(title: "平均步幅",
+                      value: strideValue,
+                      unit: detail?.averageStrideLength != nil ? "cm" : ""),
+            ],
+            [
+                .init(title: "累计上升",
+                      value: RunDetailFormat.int(detail?.elevationAscended),
+                      unit: detail?.elevationAscended != nil ? "m" : ""),
+                .init(title: "消耗能量",
+                      value: RunDetailFormat.int(detail?.activeEnergy),
+                      unit: detail?.activeEnergy != nil ? "kcal" : ""),
+                .init(title: "平均功率",
+                      value: RunDetailFormat.power(detail?.averagePower),
+                      unit: detail?.averagePower != nil ? "W" : ""),
+            ]
         ]
 
-        return LazyVGrid(
-            columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3),
-            spacing: 18
-        ) {
-            ForEach(items) { item in
-                MetricColumn(item: item)
+        return VStack(spacing: 0) {
+            ForEach(Array(rows.enumerated()), id: \.offset) { rowIdx, row in
+                HStack(spacing: 0) {
+                    ForEach(Array(row.enumerated()), id: \.offset) { colIdx, item in
+                        MetricColumn(item: item)
+                            .frame(maxWidth: .infinity, alignment: .center)
+
+                        if colIdx < row.count - 1 {
+                            Rectangle()
+                                .fill(Color.primary.opacity(0.06))
+                                .frame(width: 1, height: 32)
+                                .padding(.horizontal, 4)
+                        }
+                    }
+                }
+                .padding(.vertical, 12)
+
+                if rowIdx < rows.count - 1 {
+                    Rectangle()
+                        .fill(Color.primary.opacity(0.05))
+                        .frame(height: 0.5)
+                }
             }
         }
     }
@@ -249,7 +268,7 @@ struct RunMetricsGrid: View {
     }
 }
 
-// MARK: - 单个指标列
+// MARK: - 单个指标列（内容居中）
 
 private struct MetricItem: Identifiable {
     let id = UUID()
@@ -263,13 +282,19 @@ private struct MetricColumn: View {
     let item: MetricItem
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .center, spacing: 5) {
             HStack(alignment: .firstTextBaseline, spacing: 2) {
                 Text(item.value)
                     .font(.system(size: 22, weight: .bold, design: .rounded))
                     .foregroundStyle(item.accent
-                                     ? Color(red: 0.29, green: 0.65, blue: 0.92)
-                                     : .primary)
+                                     ? AnyShapeStyle(LinearGradient(
+                                        colors: [
+                                            Color(red: 1.0, green: 0.62, blue: 0.2),
+                                            Color(red: 1.0, green: 0.42, blue: 0.15)
+                                        ],
+                                        startPoint: .leading,
+                                        endPoint: .trailing))
+                                     : AnyShapeStyle(.primary))
                     .monospacedDigit()
                     .lineLimit(1)
                     .minimumScaleFactor(0.55)
@@ -288,6 +313,5 @@ private struct MetricColumn: View {
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
