@@ -20,7 +20,7 @@ enum RunScope: String, CaseIterable, Identifiable {
 
 struct SportTabView: View {
     @State private var store: WorkoutStore
-    @State private var summaryScope: RunScope = .month
+    @State private var summaryScope: RunScope = .week
 
     init(store: WorkoutStore = WorkoutStore()) {
         _store = State(initialValue: store)
@@ -59,6 +59,11 @@ struct SportTabView: View {
             } else {
                 ScrollView {
                     VStack(spacing: 12) {
+                        // 错误提示（如有）
+                        if let error = store.errorMessage {
+                            errorBanner(error)
+                        }
+
                         // ① 汇总卡片（周/月切换，可点击进年度页）
                         NavigationLink {
                             RunYearView(store: store)
@@ -86,10 +91,7 @@ struct SportTabView: View {
                     .padding(.bottom, 24)
                 }
                 .refreshable {
-                    await store.loadWorkouts()
-                    store.resetSplits()
-                    await store.loadAllRunSplits()
-                    store.computePersonalBests()
+                    await load(requestAuth: false, resetSplits: true)
                 }
             }
         }
@@ -98,15 +100,7 @@ struct SportTabView: View {
             RunDetailView(workout: workout)
         }
         .task {
-            // 1. 授权
-            await store.requestAuthorization()
-
-            // 2. 加载 workouts（内部会真正等待查询结束）
-            await store.loadWorkouts()
-
-            // 3. 加载 splits + 计算 PB
-            await store.loadAllRunSplits()
-            store.computePersonalBests()
+            await load(requestAuth: true, resetSplits: false)
         }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
@@ -117,6 +111,41 @@ struct SportTabView: View {
                 }
             }
         }
+    }
+
+    // MARK: - 加载入口
+
+    @MainActor
+    private func load(requestAuth: Bool, resetSplits: Bool) async {
+        if requestAuth {
+            await store.requestAuthorization()
+        }
+        await store.loadWorkouts()
+        if resetSplits {
+            store.resetSplits()
+        }
+        await store.loadAllRunSplits()
+        store.computePersonalBests()
+    }
+
+    // MARK: - 错误横幅
+
+    private func errorBanner(_ message: String) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+            Text(message)
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            Color.orange.opacity(0.1),
+            in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+        )
     }
 }
 
@@ -170,25 +199,14 @@ struct RunSummaryCard: View {
         }
     }
 
-    // MARK: 主题渐变
-
-    private var runGradient: LinearGradient {
-        LinearGradient(
-            colors: [
-                Color(red: 1.0, green: 0.62, blue: 0.2),
-                Color(red: 1.0, green: 0.42, blue: 0.15)
-            ],
-            startPoint: .topLeading,
-            endPoint: .bottomTrailing
-        )
-    }
-
     // MARK: 格式化
 
     private var distanceValue: String {
         guard totalDistance > 0 else { return "0" }
-        return String(format: "%.1f", totalDistance / 1000)
+        let km = (totalDistance / 1000).truncated(to: 1)   // 汇总用 1 位
+        return String(format: "%.1f", km)
     }
+    
     private var durationValue: String {
         let total = Int(totalDuration)
         if total >= 3600 {
@@ -246,7 +264,20 @@ struct RunSummaryCard: View {
                 Spacer(minLength: 8)
 
                 if showsToggle, let onScopeChange {
-                    scopeToggle(onScopeChange)
+                    Picker("", selection: Binding(
+                        get: { scope },
+                        set: { newValue in
+                            withAnimation(.snappy) { onScopeChange(newValue) }
+                        }
+                    )) {
+                        ForEach(RunScope.allCases) { s in
+                            Text(s.rawValue).tag(s)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(width: 100)
+                    .labelsHidden()
+                    .tint(.orange)
                 }
             }
 
@@ -271,32 +302,6 @@ struct RunSummaryCard: View {
         .contentShape(.rect(cornerRadius: 18))
     }
 
-    // MARK: 切换器
-
-    private func scopeToggle(_ onChange: @escaping (RunScope) -> Void) -> some View {
-        HStack(spacing: 2) {
-            ForEach(RunScope.allCases) { s in
-                Button {
-                    withAnimation(.snappy) { onChange(s) }
-                } label: {
-                    Text(s.rawValue)
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(scope == s ? Color.white : Color.secondary)
-                        .frame(width: 30, height: 22)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .background {
-                    if scope == s {
-                        Capsule().fill(runGradient)
-                    }
-                }
-            }
-        }
-        .padding(2)
-        .background(Capsule().fill(Color.primary.opacity(0.06)))
-    }
-
     private var divider: some View {
         Rectangle()
             .fill(Color.primary.opacity(0.08))
@@ -310,11 +315,11 @@ struct RunSummaryCard: View {
                 Text(value)
                     .font(.system(size: 24, weight: .bold, design: .rounded))
                     .monospacedDigit()
-                    .foregroundStyle(runGradient)
+                    .foregroundStyle(.runGradient)
 
                 Text(unit)
                     .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(runGradient.opacity(0.7))
+                    .foregroundStyle(.runGradient.opacity(0.7))
             }
             Text(title)
                 .font(.system(size: 10))
@@ -356,7 +361,7 @@ struct RunSummaryCard: View {
         return ZStack {
             if didRun {
                 Circle()
-                    .fill(runGradient)
+                    .fill(.runGradient)
                     .frame(width: 20, height: 20)
             } else if isToday {
                 Circle()
@@ -407,7 +412,7 @@ struct RunSummaryCard: View {
         return ZStack {
             if didRun {
                 Circle()
-                    .fill(runGradient)
+                    .fill(.runGradient)
                     .frame(width: 20, height: 20)
             } else if isToday {
                 Circle()
@@ -428,218 +433,6 @@ struct RunSummaryCard: View {
             return anchorDate
         }
         return cal.date(byAdding: .day, value: day - 1, to: interval.start) ?? anchorDate
-    }
-}
-
-// MARK: - 本周跑步卡片
-
-struct WeekRunsCard: View {
-    let workouts: [Workout]
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Text("本周跑步")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.secondary)
-
-                Spacer()
-
-                if !workouts.isEmpty {
-                    Text("\(workouts.count) 次")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.tertiary)
-                }
-            }
-            .padding(.bottom, 10)
-
-            if workouts.isEmpty {
-                Text("本周还没有跑步记录")
-                    .font(.system(size: 13))
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 24)
-            } else {
-                VStack(spacing: 0) {
-                    ForEach(Array(workouts.enumerated()),
-                            id: \.element.id) { index, workout in
-                        NavigationLink(value: workout) {
-                            WorkoutRow(workout: workout)
-                                .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-
-                        if index < workouts.count - 1 {
-                            Divider()
-                                .padding(.leading, 52)
-                        }
-                    }
-                }
-            }
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .glassEffect(.regular, in: .rect(cornerRadius: 18))
-    }
-}
-
-// MARK: - 个人最好成绩卡片
-
-struct PBCard: View {
-    let bests: [PersonalBest]
-
-    private var runGradient: LinearGradient {
-        LinearGradient(
-            colors: [
-                Color(red: 1.0, green: 0.62, blue: 0.2),
-                Color(red: 1.0, green: 0.42, blue: 0.15)
-            ],
-            startPoint: .topLeading,
-            endPoint: .bottomTrailing
-        )
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 6) {
-                Text("个人最好成绩")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.secondary)
-
-                Text("分段最快")
-                    .font(.system(size: 10))
-                    .foregroundStyle(.tertiary)
-
-                Spacer()
-
-                Text("PB")
-                    .font(.system(size: 10, weight: .bold, design: .rounded))
-                    .foregroundStyle(runGradient)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(Capsule().fill(Color.orange.opacity(0.12)))
-            }
-            .padding(.bottom, 8)
-
-            VStack(spacing: 0) {
-                ForEach(Array(bests.enumerated()), id: \.element.id) { index, pb in
-                    pbRow(pb)
-                    if index < bests.count - 1 {
-                        Divider()
-                    }
-                }
-            }
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .glassEffect(.regular, in: .rect(cornerRadius: 18))
-    }
-
-    private func pbRow(_ pb: PersonalBest) -> some View {
-        HStack(spacing: 0) {
-            Text(pb.label)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(.primary)
-                .frame(width: 52, alignment: .leading)
-
-            if let time = pb.time {
-                Text(formatTime(time))
-                    .font(.system(size: 17, weight: .bold, design: .rounded))
-                    .monospacedDigit()
-                    .foregroundStyle(runGradient)
-
-                Spacer(minLength: 8)
-
-                if let date = pb.date {
-                    Text(formatDate(date))
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                        .monospacedDigit()
-                }
-            } else {
-                Text("——")
-                    .font(.system(size: 15, weight: .semibold, design: .rounded))
-                    .foregroundStyle(.tertiary)
-
-                Spacer(minLength: 8)
-
-                Text("暂无记录")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.quaternary)
-            }
-        }
-        .padding(.vertical, 9)
-    }
-
-    private func formatTime(_ t: TimeInterval) -> String {
-        let total = max(0, Int(t.rounded()))
-        let h = total / 3600
-        let m = (total % 3600) / 60
-        let s = total % 60
-        if h > 0 {
-            return String(format: "%d:%02d:%02d", h, m, s)
-        }
-        return String(format: "%02d:%02d", m, s)
-    }
-
-    private static let dateFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.locale = Locale(identifier: "zh_CN")
-        f.dateFormat = "yyyy.MM.dd"
-        return f
-    }()
-
-    private func formatDate(_ date: Date) -> String {
-        PBCard.dateFormatter.string(from: date)
-    }
-}
-
-// MARK: - 记录行
-
-struct WorkoutRow: View {
-    let workout: Workout
-
-    var body: some View {
-        HStack(spacing: 12) {
-            ZStack {
-                Circle()
-                    .fill(workout.type.color.opacity(0.15))
-                Image(systemName: workout.type.icon)
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(workout.type.color)
-            }
-            .frame(width: 40, height: 40)
-
-            VStack(alignment: .leading, spacing: 3) {
-                Text(workout.type.rawValue)
-                    .font(.body.weight(.medium))
-
-                HStack(spacing: 6) {
-                    Text(workout.startDate, format: .dateTime.hour().minute())
-                    if let calories = workout.formattedCalories {
-                        Text("·")
-                        Text(calories)
-                    }
-                }
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            }
-
-            Spacer(minLength: 8)
-
-            VStack(alignment: .trailing, spacing: 3) {
-                Text(workout.formattedDuration)
-                    .font(.subheadline.weight(.semibold))
-                if let distance = workout.formattedDistance {
-                    Text(distance)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-        }
-        .padding(.vertical, 6)
     }
 }
 

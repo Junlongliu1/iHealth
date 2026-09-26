@@ -52,11 +52,6 @@ enum WorkoutType: String, CaseIterable, Identifiable, Codable {
         case .other:          return .gray
         }
     }
-
-    /// 是否属于有距离数据的运动
-    var hasDistance: Bool {
-        [.running, .walking, .cycling, .swimming, .hiking, .mountaineering].contains(self)
-    }
 }
 
 // MARK: - WorkoutType ↔ HKWorkoutActivityType 映射
@@ -133,8 +128,6 @@ struct Workout: Identifiable, Hashable {
         self.note = note
     }
 
-    var endDate: Date { startDate.addingTimeInterval(duration) }
-
     /// 例如 "32 分钟" / "1 小时 12 分"
     var formattedDuration: String {
         let total = Int(duration)
@@ -147,11 +140,11 @@ struct Workout: Identifiable, Hashable {
         return "\(total) 秒"
     }
 
-    /// 例如 "5.20 公里" / "800 米"
     var formattedDistance: String? {
         guard let distance else { return nil }
         if distance >= 1000 {
-            return String(format: "%.2f 公里", distance / 1000)
+            let km = (distance / 1000).truncated(to: 2)
+            return String(format: "%.2f 公里", km)
         }
         return "\(Int(distance)) 米"
     }
@@ -162,7 +155,7 @@ struct Workout: Identifiable, Hashable {
     }
 }
 
-// MARK: - HKWorkout → Workout（iOS 18 使用 statistics(for:) 读取）
+// MARK: - HKWorkout → Workout
 
 extension Workout {
     init(hkWorkout: HKWorkout) {
@@ -198,7 +191,13 @@ extension Workout {
             self.calories = nil
         }
 
-        self.note = hkWorkout.metadata?["HKWorkoutBrandName"] as? String
+        self.note = hkWorkout.metadata?[HKMetadataKeyWorkoutBrandName] as? String
+        
+        print("📏 [Workout] id=\(hkWorkout.uuid)")
+        print("     activityType=\(hkWorkout.workoutActivityType.rawValue)")
+        print("     distance(米)=\(self.distance ?? -1)")
+        print("     duration(秒)=\(self.duration)")
+        print("     startDate=\(self.startDate)")
     }
 }
 

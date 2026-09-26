@@ -13,7 +13,6 @@ final class WorkoutStore {
     private let healthStore = HKHealthStore()
 
     var workouts: [Workout] = []
-    var authorizationStatus: HKAuthorizationStatus = .notDetermined
     var isLoading = false
     var errorMessage: String?
 
@@ -63,9 +62,6 @@ final class WorkoutStore {
                 toShare: [],
                 read: typesToRead
             )
-            authorizationStatus = healthStore.authorizationStatus(
-                for: HKObjectType.workoutType()
-            )
         } catch {
             errorMessage = "授权失败：\(error.localizedDescription)"
         }
@@ -105,10 +101,16 @@ final class WorkoutStore {
         self.workouts = mapped
     }
 
-    // MARK: - 跑步详情查询
+    // MARK: - 跑步详情查询（静态，供 RunDetailView 直接调用）
 
-    func loadRunDetail(for workout: Workout) async -> RunDetail? {
-        guard let hkWorkout = await fetchHKWorkout(uuid: workout.id) else {
+    static func loadRunDetail(
+        for workout: Workout,
+        healthStore: HKHealthStore = HKHealthStore()
+    ) async -> RunDetail? {
+        guard let hkWorkout = await fetchHKWorkout(
+            uuid: workout.id,
+            healthStore: healthStore
+        ) else {
             return nil
         }
 
@@ -154,9 +156,20 @@ final class WorkoutStore {
         let vertical = hkWorkout.statistics(for: HKQuantityType(.runningVerticalOscillation))?
             .averageQuantity()?.doubleValue(for: .meterUnit(with: .centi))
 
-        let route = await fetchRoute(for: hkWorkout)
+        // 取原始 WGS-84 轨迹 → 过滤 → 转 GCJ-02
+        let rawLocations = await fetchRawRoute(
+            for: hkWorkout,
+            healthStore: healthStore
+        )
+        let filtered = filterLocations(rawLocations)
+        let route = filtered.map { CoordinateConverter.wgs84ToGcj02($0.coordinate) }
         let markers = computeKilometerMarkers(from: route)
         let sourceName = hkWorkout.sourceRevision.source.name
+        
+        print("📏 [RunDetail] id=\(workout.id)")
+        print("     workout.distance(米)=\(workout.distance ?? -1)")
+        print("     route 点数=\(route.count)")
+        print("     route 累计距离(米)=\(routeTotalDistance(of: filtered))")
 
         return RunDetail(
             startDate: workout.startDate,
@@ -181,14 +194,19 @@ final class WorkoutStore {
 
     func loadAllRunSplits() async {
         guard !hasLoadedSplits else { return }
-        hasLoadedSplits = true
 
         let runningRuns = workouts.filter {
             $0.type == .running && ($0.distance ?? 0) >= 1_000
         }
-        print("📊 [PB] 待加载 splits 的跑步数量:", runningRuns.count)
 
-        guard !runningRuns.isEmpty else { return }
+        #if DEBUG
+        print("📊 [PB] 待加载 splits 的跑步数量:", runningRuns.count)
+        #endif
+
+        guard !runningRuns.isEmpty else {
+            hasLoadedSplits = true
+            return
+        }
 
         let store = healthStore
 
@@ -214,8 +232,9 @@ final class WorkoutStore {
         }
 
         splitsCache = results
+        hasLoadedSplits = true
 
-        // Debug：打印每次跑步的 splits 情况
+        #if DEBUG
         for workout in runningRuns {
             let splits = results[workout.id] ?? []
             let dist = workout.distance.map { String(format: "%.2f", $0 / 1000) } ?? "?"
@@ -225,6 +244,7 @@ final class WorkoutStore {
 
         let totalSplits = results.values.reduce(0) { $0 + $1.count }
         print("📊 [PB] 加载完成 splits 总数:", totalSplits)
+        #endif
     }
 
     func computePersonalBests() {
@@ -233,9 +253,12 @@ final class WorkoutStore {
             workouts: runningRuns,
             splitsCache: splitsCache
         )
+
+        #if DEBUG
         print("📊 [PB] 计算结果:", personalBests.map {
             "\($0.label): \($0.time.map { String(format: "%.0f", $0) } ?? "nil")"
         })
+        #endif
     }
 
     func resetSplits() {
@@ -252,92 +275,37 @@ final class WorkoutStore {
     ) async -> [KilometerSplit] {
         guard workout.type == .running else { return [] }
 
-        guard let hkWorkout = await fetchHKWorkoutStatic(
+        guard let hkWorkout = await fetchHKWorkout(
             uuid: workout.id,
             healthStore: healthStore
         ) else { return [] }
 
-        let locations = await fetchRawRouteStatic(
+        let locations = await fetchRawRoute(
             for: hkWorkout,
             healthStore: healthStore
         )
         guard locations.count >= 2 else { return [] }
 
-        let filtered = filterLocationsStatic(locations)
+        let filtered = filterLocations(locations)
         guard filtered.count >= 2 else { return [] }
 
         // ★ 关键：用官方距离校正 route 距离
         let officialDistance = workout.distance ?? 0
-        return computeSplitsStatic(
+        return computeSplits(
             from: filtered,
             officialDistance: officialDistance > 0 ? officialDistance : nil
         )
     }
 
-    private static func fetchRawRouteStatic(
-        for workout: HKWorkout,
-        healthStore: HKHealthStore
-    ) async -> [CLLocation] {
-        let routes: [HKWorkoutRoute] = await withCheckedContinuation { continuation in
-            let predicate = HKQuery.predicateForObjects(from: workout)
-            let query = HKSampleQuery(
-                sampleType: HKSeriesType.workoutRoute(),
-                predicate: predicate,
-                limit: 1,
-                sortDescriptors: nil
-            ) { _, samples, _ in
-                continuation.resume(returning: (samples as? [HKWorkoutRoute]) ?? [])
-            }
-            healthStore.execute(query)
-        }
-
-        guard let route = routes.first else { return [] }
-
-        return await withCheckedContinuation { continuation in
-            var locations: [CLLocation] = []
-            var resumed = false
-            let query = HKWorkoutRouteQuery(route: route) { _, batch, done, _ in
-                if let batch { locations.append(contentsOf: batch) }
-                if done, !resumed {
-                    resumed = true
-                    continuation.resume(returning: locations)
-                }
-            }
-            healthStore.execute(query)
-        }
-    }
-
-    private static func fetchHKWorkoutStatic(
-        uuid: UUID,
-        healthStore: HKHealthStore
-    ) async -> HKWorkout? {
-        await withCheckedContinuation { continuation in
-            let predicate = HKQuery.predicateForObject(with: uuid)
-            let query = HKSampleQuery(
-                sampleType: HKWorkoutType.workoutType(),
-                predicate: predicate,
-                limit: 1,
-                sortDescriptors: nil
-            ) { _, samples, _ in
-                continuation.resume(returning: samples?.first as? HKWorkout)
-            }
-            healthStore.execute(query)
-        }
-    }
-
     /// 精度 + 速度过滤
-    /// - 精度阈值放宽到 100m（原 50m 太严，会丢点导致距离低估）
-    /// - 用 `lastKept` 与上一个"保留点"比较（原逻辑与上一个"原始点"比较，容易误杀）
-    /// - 距离很小（< 3m）时无条件保留，避免误杀慢速时的正常点
-    private static func filterLocationsStatic(
+    private static func filterLocations(
         _ locations: [CLLocation]
     ) -> [CLLocation] {
         var filtered: [CLLocation] = []
         var lastKept: CLLocation?
-        let maxSpeed: Double = 12.0   // 43 km/h 上限（放宽，避免误杀下坡冲刺）
+        let maxSpeed: Double = 12.0   // 43 km/h 上限
 
         for location in locations {
-            // 精度过滤
             guard location.horizontalAccuracy >= 0,
                   location.horizontalAccuracy <= 100 else { continue }
 
@@ -364,16 +332,25 @@ final class WorkoutStore {
                 filtered.append(location)
                 lastKept = location
             }
-            // 速度超限：丢弃当前点，lastKept 不动
         }
 
         return filtered
     }
 
+#if DEBUG
+/// 仅用于调试：累加轨迹点之间的球面距离
+private static func routeTotalDistance(of locations: [CLLocation]) -> Double {
+    guard locations.count >= 2 else { return 0 }
+    var total: Double = 0
+    for i in 1..<locations.count {
+        total += locations[i].distance(from: locations[i - 1])
+    }
+    return total
+}
+#endif
+    
     /// 从带时间戳的轨迹点计算每 1km 分段
-    /// - Parameter officialDistance: HealthKit 记录的官方总距离（米）
-    ///   用于校正 route 距离的低估：如果 route 距离比官方少 20%，每个 split 要按官方 1km 对应的 route 距离切分
-    private static func computeSplitsStatic(
+    private static func computeSplits(
         from locations: [CLLocation],
         officialDistance: Double?
     ) -> [KilometerSplit] {
@@ -397,16 +374,7 @@ final class WorkoutStore {
         let routeTotalDist = cumDist.last ?? 0
         guard routeTotalDist >= 500 else { return [] }
 
-        // ★ 计算切分间距
-        // route 距离可能低估，officialDistance 是"真实"距离
-        // 例如 routeTotalDist = 9000, official = 10000 → 每个 1km 对应 route 上的 900m
-        //   → 切分间距 = 1000 * (official / routeTotal) = 1111...（不对，等一下）
-        //
-        // 正确逻辑：
-        // - 用户真实跑了 10km（official=10000m）
-        // - route 只累计出 9000m
-        // - 那么每个真实 1km 对应 route 的 9000/10000 = 0.9km = 900m
-        // - 所以切分间距 = 1000 * (routeTotalDist / officialDistance)
+        // 校正切分间距：route 距离可能低估
         let segmentMeters: Double
         if let official = officialDistance, official > 0 {
             segmentMeters = 1000.0 * (routeTotalDist / official)
@@ -448,9 +416,12 @@ final class WorkoutStore {
         return splits
     }
 
-    // MARK: - 私有辅助（Route / Marker）
+    // MARK: - 私有辅助（HealthKit fetch）
 
-    private func fetchHKWorkout(uuid: UUID) async -> HKWorkout? {
+    private static func fetchHKWorkout(
+        uuid: UUID,
+        healthStore: HKHealthStore
+    ) async -> HKWorkout? {
         await withCheckedContinuation { continuation in
             let predicate = HKQuery.predicateForObject(with: uuid)
             let query = HKSampleQuery(
@@ -465,7 +436,11 @@ final class WorkoutStore {
         }
     }
 
-    private func fetchRoute(for workout: HKWorkout) async -> [CLLocationCoordinate2D] {
+    /// 返回原始 WGS-84 轨迹，不做过滤、不做坐标转换
+    private static func fetchRawRoute(
+        for workout: HKWorkout,
+        healthStore: HKHealthStore
+    ) async -> [CLLocation] {
         let routes: [HKWorkoutRoute] = await withCheckedContinuation { continuation in
             let predicate = HKQuery.predicateForObjects(from: workout)
             let query = HKSampleQuery(
@@ -481,7 +456,7 @@ final class WorkoutStore {
 
         guard let route = routes.first else { return [] }
 
-        let rawLocations: [CLLocation] = await withCheckedContinuation { continuation in
+        return await withCheckedContinuation { continuation in
             var locations: [CLLocation] = []
             var resumed = false
             let query = HKWorkoutRouteQuery(route: route) { _, batch, done, _ in
@@ -493,12 +468,11 @@ final class WorkoutStore {
             }
             healthStore.execute(query)
         }
-
-        let filtered = Self.filterLocationsStatic(rawLocations)
-        return filtered.map { CoordinateConverter.wgs84ToGcj02($0.coordinate) }
     }
 
-    private func computeKilometerMarkers(
+    // MARK: - 私有辅助（Marker）
+
+    private static func computeKilometerMarkers(
         from route: [CLLocationCoordinate2D]
     ) -> [KilometerMarker] {
         guard route.count >= 2 else { return [] }
@@ -539,58 +513,16 @@ final class WorkoutStore {
 
         return markers
     }
+}
 
-    // MARK: - Preview / 测试注入
+// MARK: - Preview / 测试注入
 
+#if DEBUG
+extension WorkoutStore {
     static func preview(_ workouts: [Workout]) -> WorkoutStore {
         let store = WorkoutStore()
         store.workouts = workouts
         return store
     }
 }
-
-// MARK: - PB 引擎
-
-enum PBEngine {
-    static let targets: [(label: String, distance: Double)] = [
-        ("1 km",  1_000),
-        ("3 km",  3_000),
-        ("5 km",  5_000),
-        ("10 km", 10_000),
-        ("半马",  21_097.5),
-        ("全马",  42_195)
-    ]
-
-    static func compute(
-        workouts: [Workout],
-        splitsCache: [UUID: [KilometerSplit]]
-    ) -> [PersonalBest] {
-        targets.map { target in
-            let kmCount = max(1, Int(target.distance / 1000))
-
-            var best: (time: TimeInterval, date: Date)?
-
-            for workout in workouts {
-                guard let splits = splitsCache[workout.id],
-                      splits.count >= kmCount else { continue }
-
-                for i in 0...(splits.count - kmCount) {
-                    var sum: TimeInterval = 0
-                    for j in i..<(i + kmCount) {
-                        sum += splits[j].duration
-                    }
-                    if best == nil || sum < best!.time {
-                        best = (sum, splits[i].startDate)
-                    }
-                }
-            }
-
-            return PersonalBest(
-                label: target.label,
-                distance: target.distance,
-                time: best?.time,
-                date: best?.date
-            )
-        }
-    }
-}
+#endif

@@ -56,17 +56,6 @@ struct RunYearView: View {
         yearRuns.reduce(0) { $0 + $1.duration }
     }
 
-    private var runGradient: LinearGradient {
-        LinearGradient(
-            colors: [
-                Color(red: 1.0, green: 0.62, blue: 0.2),
-                Color(red: 1.0, green: 0.42, blue: 0.15)
-            ],
-            startPoint: .topLeading,
-            endPoint: .bottomTrailing
-        )
-    }
-
     var body: some View {
         ScrollView {
             VStack(spacing: 12) {
@@ -149,7 +138,7 @@ struct RunYearView: View {
 
             HStack(spacing: 0) {
                 summaryItem(
-                    value: String(format: "%.1f", yearDistance / 1000),
+                    value: String(format: "%.1f", (yearDistance / 1000).truncated(to: 1)),
                     unit: "km",
                     title: "跑量"
                 )
@@ -191,11 +180,11 @@ struct RunYearView: View {
                 Text(value)
                     .font(.system(size: 24, weight: .bold, design: .rounded))
                     .monospacedDigit()
-                    .foregroundStyle(runGradient)
+                    .foregroundStyle(.runGradient)
 
                 Text(unit)
                     .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(runGradient.opacity(0.7))
+                    .foregroundStyle(.runGradient.opacity(0.7))
             }
             Text(title)
                 .font(.system(size: 10))
@@ -289,5 +278,14 @@ struct RunMonthView: View {
 #Preview("年度 - 示例数据") {
     NavigationStack {
         RunYearView(store: WorkoutStore.preview(Workout.preview))
+    }
+}
+
+#Preview("月度 - 示例数据") {
+    NavigationStack {
+        RunMonthView(
+            store: WorkoutStore.preview(Workout.preview),
+            month: Date()
+        )
     }
 }

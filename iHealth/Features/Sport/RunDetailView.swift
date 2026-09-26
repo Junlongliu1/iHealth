@@ -15,7 +15,6 @@ struct RunDetailView: View {
     @Environment(\.dismiss) private var dismiss
     @Namespace private var glassNamespace
 
-    @State private var store = WorkoutStore()
     @State private var detail: RunDetail?
     @State private var isLoading = true
     @State private var camera: MapCameraPosition = .automatic
@@ -48,7 +47,7 @@ struct RunDetailView: View {
         }
         .toolbar(.hidden, for: .navigationBar)
         .task {
-            detail = await store.loadRunDetail(for: workout)
+            detail = await WorkoutStore.loadRunDetail(for: workout)
             updateCamera()
             isLoading = false
         }
@@ -205,6 +204,7 @@ struct RunDetailView: View {
                 Spacer(minLength: 0)
 
                 // 头像
+                // TODO: 接入用户系统，替换硬编码的 "Evron"
                 VStack(spacing: 4) {
                     ZStack {
                         Circle()
@@ -271,10 +271,6 @@ struct RunDetailView: View {
                   unit: detail?.averagePace != nil ? "/km" : "",
                   accent: true),
 
-            .init(title: "平均功率",
-                  value: formattedInt(detail?.averagePower),
-                  unit: detail?.averagePower != nil ? "W" : ""),
-
             .init(title: "平均心率",
                   value: formattedInt(detail?.averageHeartRate),
                   unit: detail?.averageHeartRate != nil ? "bpm" : ""),
@@ -283,33 +279,25 @@ struct RunDetailView: View {
                   value: formattedInt(detail?.maxHeartRate),
                   unit: detail?.maxHeartRate != nil ? "bpm" : ""),
 
-            .init(title: "累计上升",
-                  value: formattedInt(detail?.elevationAscended),
-                  unit: detail?.elevationAscended != nil ? "m" : ""),
-
+            .init(title: "平均步频",
+                  value: formattedInt(detail?.averageCadence),
+                  unit: detail?.averageCadence != nil ? "/min" : ""),
+            
             .init(title: "平均步幅",
                   value: formattedStride,
                   unit: detail?.averageStrideLength != nil ? "cm" : ""),
 
-            .init(title: "平均步频",
-                  value: formattedInt(detail?.averageCadence),
-                  unit: detail?.averageCadence != nil ? "/min" : ""),
-
-            .init(title: "垂直振幅",
-                  value: formattedDouble(detail?.verticalOscillation, digits: 1),
-                  unit: detail?.verticalOscillation != nil ? "cm" : ""),
-
-            .init(title: "垂直步幅比",
-                  value: formattedVerticalRatio,
-                  unit: verticalRatioValue != nil ? "%" : ""),
+            .init(title: "累计上升",
+                  value: formattedInt(detail?.elevationAscended),
+                  unit: detail?.elevationAscended != nil ? "m" : ""),
 
             .init(title: "消耗能量",
                   value: formattedInt(detail?.activeEnergy),
                   unit: detail?.activeEnergy != nil ? "kcal" : ""),
 
-            .init(title: "总距离",
-                  value: formattedTotalDistance,
-                  unit: detail?.distance != nil ? "km" : "")
+            .init(title: "平均功率",
+                  value: formattedInt(detail?.averagePower),
+                  unit: detail?.averagePower != nil ? "W" : "")
         ]
 
         return LazyVGrid(
@@ -327,23 +315,6 @@ struct RunDetailView: View {
         return String(Int((stride * 100).rounded()))
     }
 
-    private var verticalRatioValue: Double? {
-        guard let osc = detail?.verticalOscillation,
-              let stride = detail?.averageStrideLength,
-              stride > 0 else { return nil }
-        return osc / (stride * 100) * 100
-    }
-
-    private var formattedVerticalRatio: String {
-        guard let ratio = verticalRatioValue else { return "--" }
-        return String(format: "%.1f", ratio)
-    }
-
-    private var formattedTotalDistance: String {
-        guard let distance = detail?.distance else { return "--" }
-        return String(format: "%.2f", distance / 1000)
-    }
-
     // MARK: - 路线绘制
 
     @MapContentBuilder
@@ -359,14 +330,7 @@ struct RunDetailView: View {
             // 主线
             MapPolyline(coordinates: route)
                 .stroke(
-                    LinearGradient(
-                        colors: [
-                            Color(red: 1.0, green: 0.62, blue: 0.2),
-                            Color(red: 1.0, green: 0.42, blue: 0.15)
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    ),
+                    .runGradient,
                     style: StrokeStyle(lineWidth: 3.5,
                                        lineCap: .round,
                                        lineJoin: .round)
@@ -423,14 +387,17 @@ struct RunDetailView: View {
             latitudeDelta: max(maxLat - minLat, 0.003) * 1.5,
             longitudeDelta: max(maxLon - minLon, 0.003) * 1.5
         )
-        camera = .region(MKCoordinateRegion(center: center, span: span))
+        withAnimation(.easeInOut(duration: 0.6)) {
+            camera = .region(MKCoordinateRegion(center: center, span: span))
+        }
     }
 
     // MARK: - 文本
 
     private var bigDistanceValue: String {
         guard let distance = detail?.distance, distance > 0 else { return "--" }
-        return String(format: "%.2f", distance / 1000)
+        let km = (distance / 1000).truncated(to: 2)
+        return String(format: "%.2f", km)
     }
 
     private var distanceUnit: String {
@@ -468,7 +435,7 @@ struct RunDetailView: View {
 
     private func formattedInt(_ value: Double?) -> String {
         guard let value else { return "--" }
-        return String(Int(value.rounded()))
+        return String(Int(value))
     }
 
     private func formattedDouble(_ value: Double?, digits: Int) -> String {
