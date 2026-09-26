@@ -77,31 +77,31 @@ final class WorkoutStore {
         isLoading = true
         defer { isLoading = false }
 
+        let store = healthStore   // 提前取出，避免闭包捕获 self
         let sortDescriptor = NSSortDescriptor(
             key: HKSampleSortIdentifierStartDate,
             ascending: false
         )
 
-        let hkWorkouts: [HKWorkout] = await withCheckedContinuation { continuation in
-            let query = HKSampleQuery(
-                sampleType: HKWorkoutType.workoutType(),
-                predicate: nil,
-                limit: HKObjectQueryNoLimit,
-                sortDescriptors: [sortDescriptor]
-            ) { _, samples, error in
-                if let error {
-                    Task { @MainActor [weak self] in
-                        self?.errorMessage = "读取失败：\(error.localizedDescription)"
-                    }
-                    continuation.resume(returning: [])
-                    return
+        let (samples, error): ([HKWorkout], Error?) =
+            await withCheckedContinuation { continuation in
+                let query = HKSampleQuery(
+                    sampleType: HKWorkoutType.workoutType(),
+                    predicate: nil,
+                    limit: HKObjectQueryNoLimit,
+                    sortDescriptors: [sortDescriptor]
+                ) { _, samples, error in
+                    continuation.resume(returning: ((samples as? [HKWorkout]) ?? [], error))
                 }
-                continuation.resume(returning: (samples as? [HKWorkout]) ?? [])
+                store.execute(query)
             }
-            healthStore.execute(query)
+
+        if let error {
+            errorMessage = "读取失败：\(error.localizedDescription)"
+            return
         }
 
-        self.workouts = hkWorkouts.map { Workout(hkWorkout: $0) }
+        workouts = samples.map { Workout(hkWorkout: $0) }
     }
 
     // MARK: - 跑步详情查询
