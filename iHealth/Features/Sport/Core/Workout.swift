@@ -236,6 +236,36 @@ struct RunDetail {
     var sourceName: String? = nil      // "Apple Watch" / "iPhone"
     var kilometerMarkers: [KilometerMarker] = []
 }
+
+// MARK: - 公里分段（PB 用）
+
+/// 一次跑步的每 1 公里分段
+struct KilometerSplit: Identifiable, Hashable {
+    var id: Int { index }
+    /// 第几公里（1-based）
+    let index: Int
+    /// 该段距离（米），标准为 1000
+    let distance: Double
+    /// 该段用时（秒）
+    let duration: TimeInterval
+    /// 该段起始时间
+    let startDate: Date
+}
+
+// MARK: - 个人最好成绩
+
+struct PersonalBest: Identifiable, Hashable {
+    var id: String { label }
+    /// 显示名："1 km" / "半马"
+    let label: String
+    /// 目标距离（米）
+    let distance: Double
+    /// 用时（秒），nil 表示没有满足条件的跑步
+    var time: TimeInterval?
+    /// 达成日期
+    var date: Date?
+}
+
 // MARK: - SwiftUI Preview 用示例数据（仅开发期使用）
 
 #if DEBUG
