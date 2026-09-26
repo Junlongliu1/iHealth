@@ -140,6 +140,7 @@ struct Workout: Identifiable, Hashable {
         return "\(total) 秒"
     }
 
+    /// 例如 "5.20 公里" / "800 米"
     var formattedDistance: String? {
         guard let distance else { return nil }
         if distance >= 1000 {
@@ -192,14 +193,10 @@ extension Workout {
         }
 
         self.note = hkWorkout.metadata?[HKMetadataKeyWorkoutBrandName] as? String
-        
-        print("📏 [Workout] id=\(hkWorkout.uuid)")
-        print("     activityType=\(hkWorkout.workoutActivityType.rawValue)")
-        print("     distance(米)=\(self.distance ?? -1)")
-        print("     duration(秒)=\(self.duration)")
-        print("     startDate=\(self.startDate)")
     }
 }
+
+// MARK: - 公里标记
 
 struct KilometerMarker: Identifiable, Hashable {
     let id: Int                               // 第几公里
@@ -214,6 +211,120 @@ struct KilometerMarker: Identifiable, Hashable {
     }
 }
 
+// MARK: - 时间序列点
+
+struct MetricPoint: Identifiable, Hashable {
+    var id: Date { date }
+    let date: Date
+    let value: Double
+}
+
+/// 一次跑步的详细时间序列
+struct RunSeries {
+    var heartRate: [MetricPoint] = []           // bpm
+    var pace: [MetricPoint] = []                // 秒 / 公里
+    var strideLength: [MetricPoint] = []        // 米
+    var cadence: [MetricPoint] = []             // 步 / 分钟
+    var groundContactTime: [MetricPoint] = []   // 毫秒
+    var verticalOscillation: [MetricPoint] = [] // 厘米
+    var power: [MetricPoint] = []               // 瓦特
+    var elevation: [MetricPoint] = []           // 米
+}
+
+// MARK: - 最大摄氧量
+
+/// 最大摄氧量信息
+struct VO2MaxInfo {
+    /// 当前值 ml/(kg·min)
+    let value: Double
+    /// 与上一次记录的差值，nil 表示无历史记录
+    let delta: Double?
+    /// 苹果健康分级
+    let classification: VO2MaxClassification?
+
+    // 用于详情弹窗展示
+    let age: Int?
+    let sex: HKBiologicalSex?
+    let thresholds: VO2MaxThresholds?
+    let previousValue: Double?
+}
+
+/// 某年龄 + 性别的三档阈值
+struct VO2MaxThresholds {
+    let low: Double
+    let belowAvg: Double
+    let high: Double
+}
+
+/// 苹果健康（Cardio Fitness）的四级分类
+enum VO2MaxClassification: String {
+    case low           = "低"
+    case belowAverage  = "低于平均"
+    case aboveAverage  = "高于平均"
+    case high          = "高"
+
+    var color: Color {
+        switch self {
+        case .low:          return .red
+        case .belowAverage: return .orange
+        case .aboveAverage: return .green
+        case .high:         return .blue
+        }
+    }
+}
+
+extension VO2MaxClassification {
+    /// 按苹果健康标准，根据年龄和性别分类
+    /// 参考：Apple 使用 FRIEND 数据集的年龄-性别百分位
+    /// 阈值表基于 Apple Watch 实际显示的分级边界
+    static func classify(
+        value: Double,
+        age: Int,
+        sex: HKBiologicalSex
+    ) -> VO2MaxClassification? {
+        guard age >= 20 else { return nil }
+
+        let t = thresholdsFor(age: age, sex: sex)
+
+        switch value {
+        case ..<t.low:            return .low
+        case t.low..<t.belowAvg:  return .belowAverage
+        case t.belowAvg..<t.high: return .aboveAverage
+        default:                  return .high
+        }
+    }
+    
+    /// 按年龄段和性别返回三个阈值（Low 上界、Below Average 上界、High 下界）
+    static func thresholdsFor(
+        age: Int,
+        sex: HKBiologicalSex
+    ) -> VO2MaxThresholds {
+        let isMale = sex == .male
+
+        switch age {
+        case 20...29:
+            return isMale
+                ? VO2MaxThresholds(low: 38, belowAvg: 48, high: 57)
+                : VO2MaxThresholds(low: 29, belowAvg: 38, high: 47)
+        case 30...39:
+            return isMale
+                ? VO2MaxThresholds(low: 34, belowAvg: 43, high: 52)
+                : VO2MaxThresholds(low: 24, belowAvg: 30, high: 38)
+        case 40...49:
+            return isMale
+                ? VO2MaxThresholds(low: 31, belowAvg: 38, high: 47)
+                : VO2MaxThresholds(low: 21, belowAvg: 27, high: 34)
+        case 50...59:
+            return isMale
+                ? VO2MaxThresholds(low: 26, belowAvg: 33, high: 41)
+                : VO2MaxThresholds(low: 19, belowAvg: 23, high: 29)
+        default: // 60+
+            return isMale
+                ? VO2MaxThresholds(low: 18, belowAvg: 28, high: 36)
+                : VO2MaxThresholds(low: 15, belowAvg: 20, high: 25)
+        }
+    }
+}
 // MARK: - 跑步详情数据
 
 struct RunDetail {
@@ -234,9 +345,13 @@ struct RunDetail {
     var route: [CLLocationCoordinate2D]
     var sourceName: String? = nil      // "Apple Watch" / "iPhone"
     var kilometerMarkers: [KilometerMarker] = []
+
+    var series: RunSeries = RunSeries()
+    var vo2Max: VO2MaxInfo? = nil
+    var splits: [KilometerSplit] = []
 }
 
-// MARK: - 公里分段（PB 用）
+// MARK: - 公里分段
 
 /// 一次跑步的每 1 公里分段
 struct KilometerSplit: Identifiable, Hashable {
@@ -249,6 +364,12 @@ struct KilometerSplit: Identifiable, Hashable {
     let duration: TimeInterval
     /// 该段起始时间
     let startDate: Date
+
+    // MARK: 该段的聚合指标（PB 计算不使用这些字段）
+    var averageHeartRate: Double? = nil
+    var averageStrideLength: Double? = nil   // 米
+    var averageCadence: Double? = nil        // 步/分钟
+    var averagePower: Double? = nil          // 瓦
 }
 
 // MARK: - 个人最好成绩

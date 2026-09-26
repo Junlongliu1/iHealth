@@ -8,6 +8,8 @@
 import SwiftUI
 import MapKit
 import CoreLocation
+import Charts
+import HealthKit
 
 struct RunDetailView: View {
     let workout: Workout
@@ -18,30 +20,49 @@ struct RunDetailView: View {
     @State private var detail: RunDetail?
     @State private var isLoading = true
     @State private var camera: MapCameraPosition = .automatic
+    @State private var scrollOffset: CGFloat = 0
 
     var body: some View {
         GeometryReader { proxy in
+            let topSafeArea = proxy.safeAreaInsets.top
             let heroHeight = max(proxy.size.height * 0.55, 420)
             let overlap: CGFloat = 30
 
             ZStack(alignment: .top) {
 
-                // ① 地图：独立一层，从顶部铺到 heroHeight
+                // ① 底层背景
+                Color(.systemBackground)
+                    .ignoresSafeArea()
+
+                // ② 地图层
                 heroMap
-                    .frame(height: heroHeight)
+                    .frame(height: heroHeight + topSafeArea)
+                    .offset(y: -max(0, scrollOffset))
+                    .scaleEffect(
+                        pullStretch(scrollOffset: scrollOffset,
+                                    heroHeight: heroHeight),
+                        anchor: .bottom
+                    )
                     .ignoresSafeArea(edges: .top)
 
-                // ② 内容：从 heroHeight - overlap 开始，ScrollView 不覆盖地图主体
+                // ③ 内容层
                 ScrollView {
                     VStack(spacing: 0) {
+                        Color.clear
+                            .frame(height: heroHeight - overlap)
+
                         contentCard
                     }
                 }
                 .scrollIndicators(.hidden)
-                .padding(.top, heroHeight - overlap)
                 .ignoresSafeArea(edges: .bottom)
+                .onScrollGeometryChange(for: CGFloat.self) { geo in
+                    geo.contentOffset.y
+                } action: { _, newValue in
+                    scrollOffset = newValue
+                }
 
-                // ③ 顶部工具栏：浮在最上层
+                // ④ 顶部工具栏
                 topBar
             }
         }
@@ -51,6 +72,12 @@ struct RunDetailView: View {
             updateCamera()
             isLoading = false
         }
+    }
+
+    private func pullStretch(scrollOffset: CGFloat, heroHeight: CGFloat) -> CGFloat {
+        guard scrollOffset < 0 else { return 1 }
+        let extra = min(-scrollOffset / heroHeight * 0.5, 0.3)
+        return 1 + extra
     }
 
     // MARK: - Hero 地图
@@ -78,7 +105,6 @@ struct RunDetailView: View {
 
     private var topBar: some View {
         HStack(spacing: 10) {
-            // 返回
             GlassEffectContainer {
                 Button {
                     dismiss()
@@ -96,7 +122,6 @@ struct RunDetailView: View {
 
             Spacer()
 
-            // 分享 + 更多（组合胶囊）
             GlassEffectContainer(spacing: 0) {
                 HStack(spacing: 0) {
                     Button {
@@ -131,7 +156,6 @@ struct RunDetailView: View {
         }
         .padding(.horizontal, 16)
         .padding(.top, 6)
-        // 品牌标题：真正居中于屏幕
         .overlay {
             Text("iHealth")
                 .font(.system(size: 17, weight: .semibold, design: .rounded))
@@ -157,10 +181,15 @@ struct RunDetailView: View {
     private var contentCard: some View {
         VStack(alignment: .leading, spacing: 0) {
 
-            // 头部：大数字 + 头像
+            Capsule()
+                .fill(Color.primary.opacity(0.18))
+                .frame(width: 36, height: 5)
+                .frame(maxWidth: .infinity)
+                .padding(.top, 10)
+                .padding(.bottom, 4)
+
             HStack(alignment: .top, spacing: 12) {
                 VStack(alignment: .leading, spacing: 8) {
-                    // 大号距离
                     HStack(alignment: .firstTextBaseline, spacing: 5) {
                         Text(bigDistanceValue)
                             .font(.system(size: 46, weight: .heavy, design: .rounded))
@@ -178,7 +207,6 @@ struct RunDetailView: View {
                             .offset(y: 1)
                     }
 
-                    // 日期
                     HStack(spacing: 5) {
                         Image(systemName: "calendar")
                             .font(.system(size: 11))
@@ -188,7 +216,6 @@ struct RunDetailView: View {
                             .foregroundStyle(.secondary)
                     }
 
-                    // 设备来源
                     if let source = detail?.sourceName, !source.isEmpty {
                         HStack(spacing: 5) {
                             Image(systemName: sourceIcon(for: source))
@@ -203,8 +230,6 @@ struct RunDetailView: View {
 
                 Spacer(minLength: 0)
 
-                // 头像
-                // TODO: 接入用户系统，替换硬编码的 "Evron"
                 VStack(spacing: 4) {
                     ZStack {
                         Circle()
@@ -230,31 +255,41 @@ struct RunDetailView: View {
                 }
             }
             .padding(.horizontal, 20)
-            .padding(.top, 22)
+            .padding(.top, 14)
 
-            // 分隔线
             Rectangle()
                 .fill(Color.primary.opacity(0.06))
                 .frame(height: 0.8)
                 .padding(.horizontal, 20)
                 .padding(.vertical, 16)
 
-            // 3 列指标网格
             metricsGrid
                 .padding(.horizontal, 16)
-                .padding(.bottom, 32)
+                .padding(.bottom, 24)
+
+            detailCards
+                .padding(.horizontal, 16)
+                .padding(.bottom, 40)
         }
         .frame(maxWidth: .infinity)
         .background {
-            Color(.systemBackground)
-                .clipShape(
-                    UnevenRoundedRectangle(
-                        topLeadingRadius: 32,
-                        topTrailingRadius: 32,
-                        style: .continuous
-                    )
-                )
-                .ignoresSafeArea(edges: .bottom)
+            UnevenRoundedRectangle(
+                topLeadingRadius: 32,
+                topTrailingRadius: 32,
+                style: .continuous
+            )
+            .fill(Color(.systemBackground))
+            .shadow(color: .black.opacity(0.10), radius: 24, x: 0, y: -8)
+            .ignoresSafeArea(edges: .bottom)
+        }
+        .overlay(alignment: .top) {
+            UnevenRoundedRectangle(
+                topLeadingRadius: 32,
+                topTrailingRadius: 32,
+                style: .continuous
+            )
+            .stroke(Color.primary.opacity(0.06), lineWidth: 0.5)
+            .allowsHitTesting(false)
         }
     }
 
@@ -282,7 +317,7 @@ struct RunDetailView: View {
             .init(title: "平均步频",
                   value: formattedInt(detail?.averageCadence),
                   unit: detail?.averageCadence != nil ? "/min" : ""),
-            
+
             .init(title: "平均步幅",
                   value: formattedStride,
                   unit: detail?.averageStrideLength != nil ? "cm" : ""),
@@ -312,7 +347,142 @@ struct RunDetailView: View {
 
     private var formattedStride: String {
         guard let stride = detail?.averageStrideLength else { return "--" }
-        return String(Int((stride * 100).rounded()))
+        return String(Int(stride * 100))
+    }
+
+    // MARK: - 详情图表卡片
+
+    private var detailCards: some View {
+        let s = detail?.series ?? RunSeries()
+
+        return VStack(spacing: 12) {
+            // ★ VO2 Max 卡片
+            if let vo2 = detail?.vo2Max {
+                VO2MaxCard(info: vo2)
+            }
+
+            // ★ 公里分段卡片
+            if let splits = detail?.splits, !splits.isEmpty {
+                SplitsTableCard(splits: splits)
+            }
+
+            // —— 原有图表卡片 ——
+            if let hr = detail?.averageHeartRate {
+                RunMetricCard(
+                    title: "心率",
+                    icon: "heart.fill",
+                    color: .red,
+                    unit: "bpm",
+                    points: s.heartRate,
+                    statLabel: "平均 \(formattedInt(hr))",
+                    averageValue: hr,
+                    yFormat: { "\(Int($0))" }
+                )
+            }
+
+            if let pace = detail?.averagePace {
+                RunMetricCard(
+                    title: "配速",
+                    icon: "speedometer",
+                    color: .orange,
+                    unit: "min/km",
+                    points: s.pace,
+                    statLabel: "平均 \(formattedPace(pace))",
+                    averageValue: pace,
+                    yFormat: { formatPaceShort($0) }
+                )
+            }
+
+            if let stride = detail?.averageStrideLength {
+                RunMetricCard(
+                    title: "步幅",
+                    icon: "ruler",
+                    color: .green,
+                    unit: "cm",
+                    points: s.strideLength,
+                    statLabel: "平均 \(Int(stride * 100))",
+                    averageValue: stride,
+                    yFormat: { String(Int($0 * 100)) }
+                )
+            }
+
+            if let cadence = detail?.averageCadence {
+                RunMetricCard(
+                    title: "步频",
+                    icon: "metronome",
+                    color: .blue,
+                    unit: "步/分",
+                    points: s.cadence,
+                    statLabel: "平均 \(formattedInt(cadence))",
+                    averageValue: cadence,
+                    yFormat: { "\(Int($0))" }
+                )
+            }
+
+            if !s.groundContactTime.isEmpty {
+                let avg = s.groundContactTime.map(\.value).reduce(0, +)
+                        / Double(s.groundContactTime.count)
+                RunMetricCard(
+                    title: "触地时间",
+                    icon: "timer",
+                    color: .purple,
+                    unit: "ms",
+                    points: s.groundContactTime,
+                    statLabel: "平均 \(formattedInt(avg))",
+                    averageValue: avg,
+                    yFormat: { "\(Int($0))" }
+                )
+            }
+
+            if let vo = detail?.verticalOscillation {
+                RunMetricCard(
+                    title: "垂直振幅",
+                    icon: "arrow.up.and.down",
+                    color: .cyan,
+                    unit: "cm",
+                    points: s.verticalOscillation,
+                    statLabel: "平均 \(String(format: "%.1f", vo))",
+                    averageValue: vo,
+                    yFormat: { String(format: "%.1f", $0) }
+                )
+            }
+
+            if let power = detail?.averagePower {
+                RunMetricCard(
+                    title: "跑步功率",
+                    icon: "bolt.fill",
+                    color: .pink,
+                    unit: "W",
+                    points: s.power,
+                    statLabel: "平均 \(String(format: "%.1f", power))",
+                    averageValue: power,
+                    yFormat: { "\(Int($0))" }
+                )
+            }
+
+            if let elev = detail?.elevationAscended, !s.elevation.isEmpty {
+                let values = s.elevation.map(\.value)
+                let maxV = values.max() ?? 0
+                let minV = values.min() ?? 0
+                let avgV = values.reduce(0, +) / Double(values.count)
+                RunMetricCard(
+                    title: "海拔",
+                    icon: "mountain.2.fill",
+                    color: .orange,
+                    unit: "m",
+                    points: s.elevation,
+                    statLabel: "最大 \(Int(maxV)) 最小 \(Int(minV)) 平均 \(String(format: "%.1f", avgV))",
+                    secondStatLabel: "↑\(formattedInt(elev))m",
+                    averageValue: avgV,
+                    yFormat: { "\(Int($0))" }
+                )
+            }
+        }
+    }
+
+    private func formatPaceShort(_ seconds: Double) -> String {
+        let total = Int(seconds.rounded())
+        return String(format: "%d'%02d\"", total / 60, total % 60)
     }
 
     // MARK: - 路线绘制
@@ -320,14 +490,12 @@ struct RunDetailView: View {
     @MapContentBuilder
     private var routeOverlay: some MapContent {
         if let route = detail?.route, route.count >= 2 {
-            // 外发光
             MapPolyline(coordinates: route)
                 .stroke(Color.orange.opacity(0.22),
                         style: StrokeStyle(lineWidth: 7,
                                            lineCap: .round,
                                            lineJoin: .round))
 
-            // 主线
             MapPolyline(coordinates: route)
                 .stroke(
                     .runGradient,
@@ -336,7 +504,6 @@ struct RunDetailView: View {
                                        lineJoin: .round)
                 )
 
-            // 起点
             if let start = route.first {
                 Annotation("", coordinate: start, anchor: .center) {
                     ZStack {
@@ -349,7 +516,6 @@ struct RunDetailView: View {
                 }
             }
 
-            // 公里标记
             ForEach(detail?.kilometerMarkers ?? []) { marker in
                 Annotation("", coordinate: marker.coordinate, anchor: .center) {
                     ZStack {
@@ -488,5 +654,689 @@ private struct MetricColumn: View {
                 .lineLimit(1)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+// MARK: - VO2 Max 卡片
+
+private struct VO2MaxCard: View {
+    let info: VO2MaxInfo
+    
+    @State private var showDetail = false
+
+    private var deltaText: String? {
+        guard let delta = info.delta, abs(delta) > 0.001 else { return nil }
+        return String(format: "%+.2f", delta)
+    }
+
+    private var isPositive: Bool { (info.delta ?? 0) >= 0 }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("最大摄氧量")
+                .font(.system(size: 16, weight: .semibold))
+
+            HStack(alignment: .center, spacing: 8) {
+                Text(String(format: "%.2f", info.value))
+                    .font(.system(size: 36, weight: .bold, design: .rounded))
+                    .foregroundStyle(Color(red: 0.20, green: 0.55, blue: 0.95))
+                    .monospacedDigit()
+
+                Spacer(minLength: 8)
+
+                if let text = deltaText {
+                    HStack(alignment: .firstTextBaseline, spacing: 2) {
+                        Text(text)
+                            .font(.system(size: 22, weight: .bold, design: .rounded))
+                            .foregroundStyle(isPositive ? Color.green : Color.red)
+                            .monospacedDigit()
+                        Image(systemName: isPositive ? "arrow.up" : "arrow.down")
+                            .font(.system(size: 14, weight: .bold))
+                            .foregroundStyle(isPositive ? Color.green : Color.red)
+                        Button {
+                            showDetail = true
+                        } label: {
+                            Image(systemName: "questionmark.circle")
+                                .font(.system(size: 14))
+                                .foregroundStyle(.tertiary)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+
+            HStack(spacing: 8) {
+                if let level = info.classification {
+                    Text(level.rawValue)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(level.color)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 4)
+                        .background(
+                            Capsule().fill(level.color.opacity(0.12))
+                        )
+                }
+
+                if deltaText != nil {
+                    Text("较上次")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.green)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 4)
+                        .background(Capsule().fill(Color.green.opacity(0.12)))
+                }
+
+                Spacer()
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: 18))
+        .overlay {
+            RoundedRectangle(cornerRadius: 18)
+                .stroke(Color.primary.opacity(0.05), lineWidth: 0.5)
+        }
+        .sheet(isPresented: $showDetail) {
+            VO2MaxDetailSheet(info: info)
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+        }
+    }
+    
+    // MARK: - VO2 Max 详情弹窗
+
+    private struct VO2MaxDetailSheet: View {
+        let info: VO2MaxInfo
+
+        @Environment(\.dismiss) private var dismiss
+
+        var body: some View {
+            NavigationStack {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 20) {
+
+                        // ① 当前状态
+                        currentStatusSection
+
+                        // ② 年龄段标准
+                        if let thresholds = info.thresholds,
+                           let age = info.age,
+                           let sex = info.sex {
+                            standardsSection(thresholds: thresholds,
+                                             age: age,
+                                             sex: sex)
+                        } else {
+                            noProfileSection
+                        }
+
+                        // ③ 对比记录
+                        if let prev = info.previousValue {
+                            comparisonSection(previous: prev)
+                        } else {
+                            noHistorySection
+                        }
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 16)
+                }
+                .navigationTitle("最大摄氧量")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button("完成") { dismiss() }
+                    }
+                }
+            }
+        }
+
+        // MARK: ① 当前状态
+
+        private var currentStatusSection: some View {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("当前状态")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.secondary)
+
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(String(format: "%.2f", info.value))
+                        .font(.system(size: 32, weight: .bold, design: .rounded))
+                        .foregroundStyle(Color(red: 0.20, green: 0.55, blue: 0.95))
+                        .monospacedDigit()
+
+                    Text("ml/(kg·min)")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.tertiary)
+
+                    Spacer()
+
+                    if let level = info.classification {
+                        Text(level.rawValue)
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(level.color)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 4)
+                            .background(Capsule().fill(level.color.opacity(0.15)))
+                    }
+                }
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color(.secondarySystemBackground),
+                        in: RoundedRectangle(cornerRadius: 14))
+        }
+
+        // MARK: ② 年龄段标准
+
+        private func standardsSection(
+            thresholds: VO2MaxThresholds,
+            age: Int,
+            sex: HKBiologicalSex
+        ) -> some View {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Text("年龄段标准")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.secondary)
+
+                    Spacer()
+
+                    Text("\(age) 岁 · \(sexLabel(sex))")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.tertiary)
+                }
+
+                VStack(spacing: 0) {
+                    ForEach(Array(ranges(thresholds).enumerated()), id: \.offset) { idx, item in
+                        HStack(spacing: 12) {
+                            Circle()
+                                .fill(item.level.color)
+                                .frame(width: 8, height: 8)
+
+                            Text(item.level.rawValue)
+                                .font(.system(size: 14, weight: .medium))
+                                .foregroundStyle(item.isCurrent ? item.level.color : .primary)
+
+                            Spacer()
+
+                            Text(item.range)
+                                .font(.system(size: 14, design: .rounded))
+                                .foregroundStyle(item.isCurrent ? item.level.color : .secondary)
+                                .monospacedDigit()
+
+                            if item.isCurrent {
+                                Image(systemName: "checkmark")
+                                    .font(.system(size: 11, weight: .bold))
+                                    .foregroundStyle(item.level.color)
+                            }
+                        }
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 11)
+                        .background(
+                            item.isCurrent
+                                ? item.level.color.opacity(0.10)
+                                : (idx % 2 == 1 ? Color.primary.opacity(0.03) : Color.clear)
+                        )
+                    }
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color(.secondarySystemBackground),
+                        in: RoundedRectangle(cornerRadius: 14))
+        }
+
+        private struct RangeItem {
+            let level: VO2MaxClassification
+            let range: String
+            let isCurrent: Bool
+        }
+
+        private func ranges(_ t: VO2MaxThresholds) -> [RangeItem] {
+            let current = info.classification
+            return [
+                RangeItem(level: .low,
+                          range: "< \(Int(t.low))",
+                          isCurrent: current == .low),
+                RangeItem(level: .belowAverage,
+                          range: "\(Int(t.low)) – \(Int(t.belowAvg) - 1)",
+                          isCurrent: current == .belowAverage),
+                RangeItem(level: .aboveAverage,
+                          range: "\(Int(t.belowAvg)) – \(Int(t.high) - 1)",
+                          isCurrent: current == .aboveAverage),
+                RangeItem(level: .high,
+                          range: "≥ \(Int(t.high))",
+                          isCurrent: current == .high)
+            ]
+        }
+
+        private func sexLabel(_ sex: HKBiologicalSex) -> String {
+            switch sex {
+            case .male:   return "男"
+            case .female: return "女"
+            default:      return "—"
+            }
+        }
+
+        // MARK: 无用户资料
+
+        private var noProfileSection: some View {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("年龄段标准")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.secondary)
+
+                HStack(spacing: 8) {
+                    Image(systemName: "info.circle")
+                        .foregroundStyle(.secondary)
+                    Text("请在「健康」App 中设置出生日期和生物性别，以显示年龄分组标准")
+                        .font(.system(size: 13))
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color(.secondarySystemBackground),
+                        in: RoundedRectangle(cornerRadius: 14))
+        }
+
+        // MARK: ③ 对比记录
+
+        private func comparisonSection(previous: Double) -> some View {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("对比记录")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.secondary)
+
+                HStack(spacing: 0) {
+                    comparisonCell(
+                        title: "上次",
+                        value: String(format: "%.2f", previous),
+                        color: .secondary
+                    )
+
+                    Image(systemName: "arrow.right")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.tertiary)
+                        .padding(.horizontal, 12)
+
+                    comparisonCell(
+                        title: "本次",
+                        value: String(format: "%.2f", info.value),
+                        color: Color(red: 0.20, green: 0.55, blue: 0.95)
+                    )
+
+                    Spacer()
+
+                    if let delta = info.delta {
+                        VStack(alignment: .trailing, spacing: 2) {
+                            HStack(spacing: 2) {
+                                Image(systemName: delta >= 0 ? "arrow.up" : "arrow.down")
+                                    .font(.system(size: 11, weight: .bold))
+                                Text(String(format: "%.2f", abs(delta)))
+                                    .font(.system(size: 16, weight: .bold, design: .rounded))
+                                    .monospacedDigit()
+                            }
+                            .foregroundStyle(delta >= 0 ? Color.green : Color.red)
+
+                            Text("变化")
+                                .font(.system(size: 10))
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color(.secondarySystemBackground),
+                        in: RoundedRectangle(cornerRadius: 14))
+        }
+
+        private func comparisonCell(title: String, value: String, color: Color) -> some View {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                Text(value)
+                    .font(.system(size: 16, weight: .semibold, design: .rounded))
+                    .foregroundStyle(color)
+                    .monospacedDigit()
+            }
+        }
+
+        private var noHistorySection: some View {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("对比记录")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.secondary)
+
+                Text("暂无历史记录可供对比")
+                    .font(.system(size: 13))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color(.secondarySystemBackground),
+                        in: RoundedRectangle(cornerRadius: 14))
+        }
+    }
+}
+
+// MARK: - 公里分段表格卡片
+
+private struct SplitsTableCard: View {
+    let splits: [KilometerSplit]
+
+    private var fastestIndex: Int? {
+        splits.min(by: { $0.duration < $1.duration })?.index
+    }
+
+    private let colIndex: CGFloat = 44
+    private let colPace: CGFloat = 68
+    private let colHR: CGFloat = 52
+    private let colStride: CGFloat = 52
+    private let colCadence: CGFloat = 52
+    private let colPower: CGFloat = 52
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("公里分段")
+                .font(.system(size: 16, weight: .semibold))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 16)
+                .padding(.top, 14)
+                .padding(.bottom, 12)
+
+            HStack(spacing: 0) {
+                headerCell("序号", width: colIndex)
+                headerCell("配速", width: colPace)
+                headerCell("心率", width: colHR)
+                headerCell("步幅", width: colStride)
+                headerCell("步频", width: colCadence)
+                headerCell("功率", width: colPower)
+            }
+            .padding(.horizontal, 12)
+            .padding(.bottom, 6)
+
+            VStack(spacing: 0) {
+                ForEach(Array(splits.enumerated()), id: \.element.id) { idx, split in
+                    rowView(split: split, isFastest: split.index == fastestIndex)
+                        .background(
+                            idx % 2 == 1
+                                ? Color.primary.opacity(0.03)
+                                : Color.clear
+                        )
+                }
+            }
+            .padding(.bottom, 8)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: 18))
+        .overlay {
+            RoundedRectangle(cornerRadius: 18)
+                .stroke(Color.primary.opacity(0.05), lineWidth: 0.5)
+        }
+    }
+
+    private func headerCell(_ text: String, width: CGFloat) -> some View {
+        Text(text)
+            .font(.system(size: 13))
+            .foregroundStyle(.tertiary)
+            .frame(width: width, alignment: .center)
+    }
+
+    private func rowView(split: KilometerSplit, isFastest: Bool) -> some View {
+        HStack(spacing: 0) {
+            HStack(spacing: 4) {
+                Text("\(split.index)")
+                    .font(.system(size: 14))
+                    .foregroundStyle(isFastest ? .primary : .secondary)
+                    .monospacedDigit()
+                    .frame(minWidth: 16)
+
+                if isFastest {
+                    Text("最快")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.orange)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(Capsule().fill(Color.orange.opacity(0.15)))
+                }
+            }
+            .frame(width: colIndex, alignment: .leading)
+
+            valueCell(formatPace(split.duration), width: colPace, primary: true)
+            valueCell(formatInt(split.averageHeartRate), width: colHR)
+            valueCell(formatStride(split.averageStrideLength), width: colStride)
+            valueCell(formatInt(split.averageCadence), width: colCadence)
+            valueCell(formatInt(split.averagePower), width: colPower)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+    }
+
+    private func valueCell(_ text: String, width: CGFloat, primary: Bool = false) -> some View {
+        Text(text)
+            .font(.system(size: 14, weight: primary ? .semibold : .regular))
+            .foregroundStyle(primary ? .primary : .secondary)
+            .monospacedDigit()
+            .frame(width: width, alignment: .center)
+    }
+
+    private func formatPace(_ seconds: TimeInterval) -> String {
+        let total = Int(seconds.rounded())
+        return String(format: "%d'%02d\"", total / 60, total % 60)
+    }
+
+    private func formatInt(_ value: Double?) -> String {
+        guard let value else { return "--" }
+        return String(Int(value))
+    }
+
+    private func formatStride(_ meters: Double?) -> String {
+        guard let meters else { return "--" }
+        return String(Int(meters * 100))
+    }
+}
+
+// MARK: - 图表卡片
+
+private struct RunMetricCard: View {
+    let title: String
+    let icon: String
+    let color: Color
+    let unit: String
+    let points: [MetricPoint]
+    let statLabel: String
+    var secondStatLabel: String? = nil
+    let averageValue: Double?
+    let yFormat: (Double) -> String
+
+    @State private var selectedDate: Date?
+    @State private var zoomScale: CGFloat = 1.0
+    @GestureState private var gestureScale: CGFloat = 1.0
+
+    private var startDate: Date { points.first?.date ?? Date() }
+    private var endDate: Date { points.last?.date ?? Date() }
+
+    private var effectiveZoom: CGFloat {
+        max(1.0, min(zoomScale * gestureScale, 4.0))
+    }
+
+    private var xDomain: ClosedRange<Date> {
+        let total = endDate.timeIntervalSince(startDate)
+        guard total > 0 else { return startDate...endDate }
+        let visible = total / effectiveZoom
+        return startDate...startDate.addingTimeInterval(visible)
+    }
+
+    private var xAxisStride: Int {
+        let minutes = endDate.timeIntervalSince(startDate) / 60
+        if minutes <= 20 { return 5 }
+        if minutes <= 60 { return 10 }
+        if minutes <= 120 { return 20 }
+        return 30
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            header
+            chart
+                .frame(height: 120)
+            hint
+        }
+        .background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: 18))
+        .overlay {
+            RoundedRectangle(cornerRadius: 18)
+                .stroke(Color.primary.opacity(0.05), lineWidth: 0.5)
+        }
+    }
+
+    private var header: some View {
+        HStack(alignment: .top, spacing: 10) {
+            HStack(spacing: 10) {
+                ZStack {
+                    Circle().fill(color.opacity(0.15))
+                    Image(systemName: icon)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(color)
+                }
+                .frame(width: 30, height: 30)
+
+                Text("\(title) (\(unit))")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(.primary)
+            }
+
+            Spacer(minLength: 8)
+
+            VStack(alignment: .trailing, spacing: 2) {
+                Text(statLabel)
+                    .font(.system(size: 13))
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+
+                if let secondStatLabel {
+                    Text(secondStatLabel)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.green)
+                        .monospacedDigit()
+                }
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 10)
+        .padding(.bottom, 8)
+    }
+
+    private var chart: some View {
+        Chart {
+            ForEach(points) { point in
+                AreaMark(
+                    x: .value("Time", point.date),
+                    y: .value("Value", point.value)
+                )
+                .foregroundStyle(
+                    LinearGradient(
+                        colors: [color.opacity(0.22), color.opacity(0.02)],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                )
+                .interpolationMethod(.catmullRom)
+
+                LineMark(
+                    x: .value("Time", point.date),
+                    y: .value("Value", point.value)
+                )
+                .foregroundStyle(color)
+                .interpolationMethod(.catmullRom)
+                .lineStyle(StrokeStyle(lineWidth: 1.5, lineCap: .round))
+            }
+
+            if let avg = averageValue {
+                RuleMark(y: .value("Average", avg))
+                    .foregroundStyle(color.opacity(0.85))
+                    .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
+            }
+
+            if let selectedDate,
+               let point = closestPoint(to: selectedDate) {
+                RuleMark(x: .value("Selected", selectedDate))
+                    .foregroundStyle(.gray.opacity(0.35))
+                    .lineStyle(StrokeStyle(lineWidth: 1))
+                    .annotation(
+                        position: .top,
+                        spacing: 4,
+                        overflowResolution: .init(x: .fit(to: .chart),
+                                                  y: .disabled)
+                    ) {
+                        Text(yFormat(point.value))
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .monospacedDigit()
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 3)
+                            .background(color, in: Capsule())
+                    }
+            }
+        }
+        .chartXScale(domain: xDomain)
+        .chartXSelection(value: $selectedDate)
+        .chartXAxis {
+            AxisMarks(values: .stride(by: .minute, count: xAxisStride)) { value in
+                AxisGridLine()
+                    .foregroundStyle(Color.gray.opacity(0.12))
+                AxisTick()
+                    .foregroundStyle(Color.gray.opacity(0.3))
+                AxisValueLabel {
+                    if let date = value.as(Date.self) {
+                        let minutes = Int(date.timeIntervalSince(startDate) / 60)
+                        Text("\(minutes)")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+        }
+        .chartYAxis {
+            AxisMarks(position: .leading, values: .automatic(desiredCount: 4)) { value in
+                AxisGridLine()
+                    .foregroundStyle(Color.gray.opacity(0.12))
+                AxisValueLabel {
+                    if let v = value.as(Double.self) {
+                        Text(yFormat(v))
+                            .font(.system(size: 10))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+        }
+        .gesture(
+            MagnifyGesture()
+                .updating($gestureScale) { value, state, _ in
+                    state = value.magnification
+                }
+                .onEnded { value in
+                    let next = zoomScale * value.magnification
+                    zoomScale = max(1.0, min(next, 4.0))
+                }
+        )
+        .padding(.horizontal, 8)
+    }
+
+    private var hint: some View {
+        Text("长按查看数值 · 双指缩放")
+            .font(.system(size: 10))
+            .foregroundStyle(.tertiary)
+            .frame(maxWidth: .infinity)
+            .padding(.top, 4)
+            .padding(.bottom, 10)
+    }
+
+    private func closestPoint(to date: Date) -> MetricPoint? {
+        points.min(by: {
+            abs($0.date.timeIntervalSince(date)) < abs($1.date.timeIntervalSince(date))
+        })
     }
 }
