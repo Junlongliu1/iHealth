@@ -6,8 +6,8 @@
 import Foundation
 
 /// 每日指标的本地缓存，使用 JSON 文件持久化。
-/// 存储位置：Application Support/iHealth/daily_metrics.json
-final class MetricsCache {
+/// 读同步（数据量小），写异步（避免阻塞主线程）。
+nonisolated final class MetricsCache: @unchecked Sendable {
 
     static let shared = MetricsCache()
 
@@ -43,8 +43,12 @@ final class MetricsCache {
     }
 
     func saveMetrics(_ metrics: [DailyMetrics]) {
-        guard let data = try? encoder.encode(metrics) else { return }
-        try? data.write(to: fileURL, options: .atomic)
+        let url = fileURL
+        let encoder = self.encoder
+        Task.detached(priority: .background) {
+            guard let data = try? encoder.encode(metrics) else { return }
+            try? data.write(to: url, options: .atomic)
+        }
     }
 
     // MARK: - 同步时间戳
@@ -55,8 +59,13 @@ final class MetricsCache {
     }
 
     func saveLastSync(_ date: Date) {
-        guard let data = try? encoder.encode(SyncMeta(lastSyncDate: date)) else { return }
-        try? data.write(to: metaURL, options: .atomic)
+        let url = metaURL
+        let encoder = self.encoder
+        let meta = SyncMeta(lastSyncDate: date)
+        Task.detached(priority: .background) {
+            guard let data = try? encoder.encode(meta) else { return }
+            try? data.write(to: url, options: .atomic)
+        }
     }
 
     // MARK: - 清理
@@ -65,10 +74,10 @@ final class MetricsCache {
         try? FileManager.default.removeItem(at: fileURL)
         try? FileManager.default.removeItem(at: metaURL)
     }
+}
 
-    // MARK: - 内部类型
+// MARK: - 内部类型
 
-    private struct SyncMeta: Codable {
-        var lastSyncDate: Date
-    }
+private nonisolated struct SyncMeta: Codable {
+    var lastSyncDate: Date
 }

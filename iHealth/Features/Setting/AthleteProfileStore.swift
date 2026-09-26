@@ -11,17 +11,14 @@ import Observation
 final class AthleteProfileStore {
     static let shared = AthleteProfileStore()
 
-    /// 年龄
     var age: Int {
         didSet { save() }
     }
 
-    /// 自定义最大心率（可选，优先于 220-年龄）
     var customMaxHR: Int? {
         didSet { save() }
     }
 
-    /// 各运动的自定义阈值心率（可选）
     var customThresholds: [String: Int] {
         didSet { save() }
     }
@@ -44,13 +41,9 @@ final class AthleteProfileStore {
     }
 
     var maxHRSource: String {
-        if let _ = customMaxHR, customMaxHR! > 0 {
-            return "自定义"
-        }
-        return "220 - 年龄"
+        (customMaxHR ?? 0) > 0 ? "自定义" : "220 - 年龄"
     }
 
-    /// 获取某运动的阈值心率
     func thresholdHR(for sport: SportType) -> Double {
         if let custom = customThresholds[sport.rawValue], custom > 0 {
             return Double(custom)
@@ -58,12 +51,8 @@ final class AthleteProfileStore {
         return maxHR * sport.defaultThresholdFraction
     }
 
-    /// 判断某运动是否用了自定义阈值
     func isCustomThreshold(for sport: SportType) -> Bool {
-        if let custom = customThresholds[sport.rawValue], custom > 0 {
-            return true
-        }
-        return false
+        (customThresholds[sport.rawValue] ?? 0) > 0
     }
 
     func setThreshold(_ value: Int?, for sport: SportType) {

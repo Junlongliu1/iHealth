@@ -78,8 +78,7 @@ struct TrainingLoadDetailView: View {
         }
         .padding(.vertical, 16)
         .frame(maxWidth: .infinity)
-        .background(Color(.secondarySystemGroupedBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .glassEffect(.regular, in: .rect(cornerRadius: 16))
     }
 
     private func summaryItem(
@@ -104,7 +103,7 @@ struct TrainingLoadDetailView: View {
         .frame(maxWidth: .infinity)
     }
 
-    // MARK: - CTL 计算
+    // MARK: - CTL
 
     private func ctlCard(_ s: ReadinessSnapshot) -> some View {
         calcCard(
@@ -123,7 +122,7 @@ struct TrainingLoadDetailView: View {
         )
     }
 
-    // MARK: - ATL 计算
+    // MARK: - ATL
 
     private func atlCard(_ s: ReadinessSnapshot) -> some View {
         calcCard(
@@ -142,7 +141,7 @@ struct TrainingLoadDetailView: View {
         )
     }
 
-    // MARK: - TSB 计算
+    // MARK: - TSB
 
     private func tsbCard(_ s: ReadinessSnapshot) -> some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -150,6 +149,7 @@ struct TrainingLoadDetailView: View {
                 Image(systemName: "gauge.with.dots.needle.67percent")
                     .font(.caption)
                     .foregroundStyle(s.tsb >= 0 ? .green : .red)
+                    .accessibilityDecorative()
                 Text("训练压力 TSB")
                     .font(.headline)
             }
@@ -180,9 +180,7 @@ struct TrainingLoadDetailView: View {
                 .foregroundStyle(.secondary)
                 .padding(.top, 4)
         }
-        .padding(16)
-        .background(Color(.secondarySystemGroupedBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .glassCard(cornerRadius: 16)
     }
 
     // MARK: - 通用计算卡片
@@ -201,6 +199,7 @@ struct TrainingLoadDetailView: View {
                 Image(systemName: icon)
                     .font(.caption)
                     .foregroundStyle(color)
+                    .accessibilityDecorative()
                 Text(title)
                     .font(.headline)
             }
@@ -227,9 +226,7 @@ struct TrainingLoadDetailView: View {
                 .foregroundStyle(.secondary)
                 .padding(.top, 4)
         }
-        .padding(16)
-        .background(Color(.secondarySystemGroupedBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .glassCard(cornerRadius: 16)
     }
 
     private func calcRow(

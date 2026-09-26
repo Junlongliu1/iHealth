@@ -9,6 +9,7 @@ import Charts
 struct ReadinessTrendView: View {
     @State private var store = BodyMetricsStore.shared
     @State private var range: TrendRange = .thirtyDays
+    @State private var selectedDate: Date?
 
     enum TrendRange: String, CaseIterable, Identifiable {
         case sevenDays  = "7 天"
@@ -28,8 +29,14 @@ struct ReadinessTrendView: View {
 
     private var snapshots: [ReadinessSnapshot] {
         let all = store.allSnapshots
-        guard all.count > range.days else { return all }
-        return Array(all.suffix(range.days))
+        return all.count > range.days ? Array(all.suffix(range.days)) : all
+    }
+
+    private var selectedSnapshot: ReadinessSnapshot? {
+        guard let selectedDate else { return nil }
+        return snapshots.first {
+            Calendar.current.isDate($0.date, inSameDayAs: selectedDate)
+        }
     }
 
     var body: some View {
@@ -42,6 +49,7 @@ struct ReadinessTrendView: View {
                 }
                 .pickerStyle(.segmented)
                 .padding(.horizontal)
+                .onChange(of: range) { _, _ in selectedDate = nil }
 
                 if snapshots.isEmpty {
                     ContentUnavailableView(
@@ -65,8 +73,17 @@ struct ReadinessTrendView: View {
 
     private var readinessChart: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("准备度与恢复度")
-                .font(.headline)
+            HStack {
+                Text("准备度与恢复度")
+                    .font(.headline)
+                Spacer()
+                if let s = selectedSnapshot {
+                    Text(dayLabel(s.date))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                }
+            }
 
             Chart {
                 ForEach(snapshots) { s in
@@ -86,6 +103,21 @@ struct ReadinessTrendView: View {
                     .foregroundStyle(.blue)
                     .interpolationMethod(.catmullRom)
                 }
+
+                if let s = selectedSnapshot {
+                    RuleMark(x: .value("选中", s.date))
+                        .lineStyle(StrokeStyle(lineWidth: 1))
+                        .foregroundStyle(.secondary.opacity(0.4))
+                        .annotation(position: .top, spacing: 4) {
+                            selectionCallout(
+                                lines: [
+                                    ("准备度", "\(Int(s.readiness.rounded()))"),
+                                    ("恢复度", "\(Int(s.recovery.rounded()))")
+                                ]
+                            )
+                        }
+                }
+
                 RuleMark(y: .value("良好线", 70))
                     .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 4]))
                     .foregroundStyle(.green.opacity(0.4))
@@ -94,6 +126,7 @@ struct ReadinessTrendView: View {
                     .foregroundStyle(.orange.opacity(0.4))
             }
             .chartYScale(domain: 0...100)
+            .chartXSelection(value: $selectedDate)
             .frame(height: 220)
 
             HStack(spacing: 16) {
@@ -101,9 +134,7 @@ struct ReadinessTrendView: View {
                 Label("恢复度", systemImage: "circle.fill").foregroundStyle(.blue).font(.caption)
             }
         }
-        .padding(16)
-        .background(Color(.secondarySystemGroupedBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 20))
+        .glassCard(cornerRadius: 20)
         .padding(.horizontal)
     }
 
@@ -124,8 +155,14 @@ struct ReadinessTrendView: View {
                         .foregroundStyle(.pink)
                         .interpolationMethod(.catmullRom)
                 }
+                if let s = selectedSnapshot {
+                    RuleMark(x: .value("选中", s.date))
+                        .lineStyle(StrokeStyle(lineWidth: 1))
+                        .foregroundStyle(.secondary.opacity(0.4))
+                }
             }
             .chartYScale(domain: 0...100)
+            .chartXSelection(value: $selectedDate)
             .frame(height: 200)
 
             HStack(spacing: 16) {
@@ -134,9 +171,7 @@ struct ReadinessTrendView: View {
                 Label("RHR", systemImage: "circle.fill").foregroundStyle(.pink).font(.caption)
             }
         }
-        .padding(16)
-        .background(Color(.secondarySystemGroupedBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 20))
+        .glassCard(cornerRadius: 20)
         .padding(.horizontal)
     }
 
@@ -160,7 +195,13 @@ struct ReadinessTrendView: View {
                 RuleMark(y: .value("零线", 0))
                     .lineStyle(StrokeStyle(lineWidth: 1))
                     .foregroundStyle(.secondary.opacity(0.4))
+                if let s = selectedSnapshot {
+                    RuleMark(x: .value("选中", s.date))
+                        .lineStyle(StrokeStyle(lineWidth: 1))
+                        .foregroundStyle(.secondary.opacity(0.4))
+                }
             }
+            .chartXSelection(value: $selectedDate)
             .frame(height: 200)
 
             HStack(spacing: 16) {
@@ -169,10 +210,32 @@ struct ReadinessTrendView: View {
                 Label("TSB", systemImage: "circle.fill").foregroundStyle(.green).font(.caption)
             }
         }
-        .padding(16)
-        .background(Color(.secondarySystemGroupedBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 20))
+        .glassCard(cornerRadius: 20)
         .padding(.horizontal)
+    }
+
+    // MARK: - 辅助
+
+    private func dayLabel(_ date: Date) -> String {
+        date.formatted(.dateTime.month(.defaultDigits).day().locale(Locale(identifier: "zh_CN")))
+    }
+
+    private func selectionCallout(lines: [(String, String)]) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            ForEach(lines, id: \.0) { line in
+                HStack(spacing: 6) {
+                    Text(line.0)
+                        .foregroundStyle(.secondary)
+                    Text(line.1)
+                        .monospacedDigit()
+                        .fontWeight(.semibold)
+                }
+            }
+        }
+        .font(.caption2)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .glassEffect(.regular, in: .rect(cornerRadius: 8))
     }
 }
 

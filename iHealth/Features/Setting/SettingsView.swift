@@ -8,10 +8,12 @@ import SwiftUI
 private enum SettingsRoute: Hashable {
     case logs
     case about
+    case profile
 }
 
 struct SettingsView: View {
     @State private var appearanceStore = AppearanceStore.shared
+    @State private var profile = AthleteProfileStore.shared
     @State private var path = NavigationPath()
 
     private var logLineCount: Int {
@@ -23,6 +25,7 @@ struct SettingsView: View {
             ScrollView {
                 GlassEffectContainer(spacing: DSLayout.cardSpacing) {
                     LazyVStack(spacing: DSLayout.cardSpacing) {
+                        profileCard
                         appearanceCard
                         developerCard
                     }
@@ -40,11 +43,51 @@ struct SettingsView: View {
             .navigationTitle("设置")
             .navigationDestination(for: SettingsRoute.self) { route in
                 switch route {
-                case .logs:  LogViewerView()
-                case .about: AboutView()
+                case .logs:    LogViewerView()
+                case .about:   AboutView()
+                case .profile: AthleteProfileView()
                 }
             }
         }
+    }
+
+    // MARK: - 个人资料
+
+    private var profileCard: some View {
+        Button { path.append(SettingsRoute.profile) } label: {
+            HStack(spacing: 12) {
+                Image(systemName: "person.fill")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.teal)
+                    .frame(width: 28, height: 28)
+                    .background(
+                        Color.teal.opacity(0.15),
+                        in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    )
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("个人资料")
+                        .font(.system(size: 15))
+                        .foregroundStyle(.primary)
+
+                    Text("\(profile.age) 岁 · 最大心率 \(Int(profile.maxHR)) bpm")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                }
+
+                Spacer(minLength: 8)
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(.horizontal, DSLayout.rowHorizontalPadding)
+            .padding(.vertical, 14)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .cardGlass()
     }
 
     // MARK: - 外观

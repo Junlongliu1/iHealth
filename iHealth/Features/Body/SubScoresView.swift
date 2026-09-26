@@ -81,28 +81,12 @@ struct SubScoresView: View {
 
     private func summaryCard(_ s: ReadinessSnapshot) -> some View {
         let state = StateStyle.from(readiness: s.readiness)
+        let tint = state.gradient.first ?? .gray
         return HStack(spacing: 16) {
-            ZStack {
-                Circle()
-                    .stroke(state.gradient.first?.opacity(0.15) ?? .gray.opacity(0.15), lineWidth: 8)
-                Circle()
-                    .trim(from: 0, to: max(0.02, min(s.recovery / 100, 1)))
-                    .stroke(
-                        state.gradient.first ?? .gray,
-                        style: StrokeStyle(lineWidth: 8, lineCap: .round)
-                    )
-                    .rotationEffect(.degrees(-90))
-
-                VStack(spacing: 0) {
-                    Text("\(Int(s.recovery.rounded()))")
-                        .font(.system(size: 28, weight: .bold, design: .rounded))
-                        .monospacedDigit()
-                    Text("恢复度")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .frame(width: 86, height: 86)
+            MetricRing(score: s.recovery, color: tint, lineWidth: 8, size: 86, fontSize: 28)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("恢复度")
+                .accessibilityValue("\(Int(s.recovery.rounded())) 分")
 
             VStack(alignment: .leading, spacing: 4) {
                 Text("恢复度由三个维度合成")
@@ -116,9 +100,7 @@ struct SubScoresView: View {
 
             Spacer(minLength: 0)
         }
-        .padding(16)
-        .background(Color(.secondarySystemGroupedBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .glassCard(cornerRadius: 16)
     }
 
     // MARK: - 分项详情
@@ -133,26 +115,14 @@ struct SubScoresView: View {
         detail: String
     ) -> some View {
         HStack(spacing: 14) {
-            // 环形
-            ZStack {
-                Circle()
-                    .stroke(color.opacity(0.15), lineWidth: 6)
-                Circle()
-                    .trim(from: 0, to: max(0.02, min(score / 100, 1)))
-                    .stroke(color, style: StrokeStyle(lineWidth: 6, lineCap: .round))
-                    .rotationEffect(.degrees(-90))
-                    .animation(.easeOut(duration: 0.5), value: score)
-                Text("\(Int(score.rounded()))")
-                    .font(.system(size: 18, weight: .bold, design: .rounded))
-                    .monospacedDigit()
-            }
-            .frame(width: 56, height: 56)
+            MetricRing(score: score, color: color, lineWidth: 6, size: 56, fontSize: 18)
 
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 5) {
                     Image(systemName: icon)
                         .font(.caption)
                         .foregroundStyle(color)
+                        .accessibilityDecorative()
                     Text(title)
                         .font(.subheadline)
                         .fontWeight(.semibold)
@@ -173,17 +143,15 @@ struct SubScoresView: View {
 
             Spacer(minLength: 0)
         }
-        .padding(14)
-        .background(Color(.secondarySystemGroupedBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .glassCard(cornerRadius: 16, padding: 14)
     }
 
     // MARK: - 对恢复度的贡献
 
     private func contributionCard(_ s: ReadinessSnapshot) -> some View {
-        let hrvContrib  = s.hrvScore * 0.40
+        let hrvContrib   = s.hrvScore * 0.40
         let sleepContrib = s.sleepScore * 0.35
-        let rhrContrib  = s.rhrScore * 0.25
+        let rhrContrib   = s.rhrScore * 0.25
 
         return VStack(alignment: .leading, spacing: 12) {
             HStack {
@@ -226,9 +194,7 @@ struct SubScoresView: View {
                     .monospacedDigit()
             }
         }
-        .padding(16)
-        .background(Color(.secondarySystemGroupedBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .glassCard(cornerRadius: 16)
     }
 
     private func contributionRow(color: Color, label: String, value: Double, maxValue: Double) -> some View {
@@ -238,15 +204,7 @@ struct SubScoresView: View {
                 .foregroundStyle(.secondary)
                 .frame(width: 56, alignment: .leading)
 
-            GeometryReader { geo in
-                ZStack(alignment: .leading) {
-                    Capsule().fill(color.opacity(0.12))
-                    Capsule()
-                        .fill(color)
-                        .frame(width: geo.size.width * max(0.02, min(value / maxValue, 1)))
-                }
-            }
-            .frame(height: 5)
+            ContributionBar(color: color, fraction: value / maxValue, height: 5)
 
             Text(String(format: "%.1f / %.0f", value, maxValue))
                 .font(.caption)
@@ -255,5 +213,8 @@ struct SubScoresView: View {
                 .monospacedDigit()
                 .frame(width: 56, alignment: .trailing)
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(label)
+        .accessibilityValue(String(format: "%.1f，满分 %.0f", value, maxValue))
     }
 }

@@ -5,30 +5,46 @@
 
 import SwiftUI
 
+enum AppTab: Hashable {
+    case body
+    case health
+    case sport
+    case settings
+}
+
 struct MainTabView: View {
+    @State private var selection: AppTab = .body
+    /// 每次切换 tab 时变化，触发内容的级联入场重播
+    @State private var activationID = UUID()
+
     var body: some View {
-        TabView {
-            Tab("身体", systemImage: "figure.mind.and.body") {
+        TabView(selection: $selection) {
+            Tab("身体", systemImage: "figure.mind.and.body", value: AppTab.body) {
                 NavigationStack {
-                    BodyTabView()
+                    BodyTabView(activationID: activationID)
                 }
             }
 
-            Tab("健康", systemImage: "heart.fill") {
+            Tab("健康", systemImage: "heart.fill", value: AppTab.health) {
                 NavigationStack {
                     HealthTabView()
                 }
             }
 
-            Tab("运动", systemImage: "figure.run") {
+            Tab("运动", systemImage: "figure.run", value: AppTab.sport) {
                 NavigationStack {
                     SportTabView()
                 }
             }
 
-            Tab("设置", systemImage: "gearshape.fill") {
+            Tab("设置", systemImage: "gearshape.fill", value: AppTab.settings) {
                 SettingsView()
             }
+        }
+        .tabBarMinimizeBehavior(.onScrollDown)
+        .sensoryFeedback(.selection, trigger: selection)
+        .onChange(of: selection) { _, _ in
+            activationID = UUID()
         }
     }
 }
@@ -47,4 +63,8 @@ struct PlaceholderView: View {
         )
         .navigationTitle(title)
     }
+}
+
+#Preview {
+    MainTabView()
 }
