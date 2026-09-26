@@ -8,6 +8,12 @@ import SwiftUI
 struct MainTabView: View {
     var body: some View {
         TabView {
+            Tab("身体", systemImage: "figure.mind.and.body") {
+                NavigationStack {
+                    BodyTabView()
+                }
+            }
+
             Tab("健康", systemImage: "heart.fill") {
                 NavigationStack {
                     HealthTabView()
@@ -17,12 +23,6 @@ struct MainTabView: View {
             Tab("运动", systemImage: "figure.run") {
                 NavigationStack {
                     SportTabView()
-                }
-            }
-
-            Tab("洞察", systemImage: "chart.line.uptrend.xyaxis") {
-                NavigationStack {
-                    PlaceholderView(title: "洞察", icon: "chart.line.uptrend.xyaxis")
                 }
             }
 
