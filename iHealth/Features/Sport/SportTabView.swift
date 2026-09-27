@@ -48,20 +48,23 @@ struct SportTabView: View {
     var body: some View {
         Group {
             if store.isLoading && store.workouts.isEmpty {
-                ProgressView("正在读取运动记录…")
+                PulseRunIndicator(caption: "正在读取运动记录…")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .transition(.opacity.combined(with: .scale(scale: 0.94)))
             } else if runningWorkouts.isEmpty {
                 ContentUnavailableView(
                     "暂无跑步记录",
                     systemImage: "figure.run",
                     description: Text("在「健康」App 或 Apple Watch 中记录一次跑步后，这里会显示")
                 )
+                .transition(.opacity)
             } else {
                 ScrollView {
                     VStack(spacing: 12) {
                         // 错误提示（如有）
                         if let error = store.errorMessage {
                             errorBanner(error)
+                                .transition(.opacity.combined(with: .move(edge: .top)))
                         }
 
                         // ① 汇总卡片（周/月切换，可点击进年度页）
@@ -93,8 +96,12 @@ struct SportTabView: View {
                 .refreshable {
                     await load(requestAuth: false, resetSplits: true)
                 }
+                .transition(.opacity)
             }
         }
+        // ★ 状态切换时统一节奏
+        .animation(.smooth(duration: 0.45), value: store.isLoading)
+        .animation(.smooth(duration: 0.45), value: runningWorkouts.isEmpty)
         .navigationTitle("跑步")
         .navigationDestination(for: Workout.self) { workout in
             RunDetailView(workout: workout)
@@ -206,7 +213,7 @@ struct RunSummaryCard: View {
         let km = (totalDistance / 1000).truncated(to: 1)   // 汇总用 1 位
         return String(format: "%.1f", km)
     }
-    
+
     private var durationValue: String {
         let total = Int(totalDuration)
         if total >= 3600 {
@@ -316,16 +323,21 @@ struct RunSummaryCard: View {
                     .font(.system(size: 24, weight: .bold, design: .rounded))
                     .monospacedDigit()
                     .foregroundStyle(.runGradient)
+                    .contentTransition(.numericText())
 
                 Text(unit)
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(.runGradient.opacity(0.7))
+                    .contentTransition(.numericText())
             }
             Text(title)
                 .font(.system(size: 10))
                 .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity)
+        // ★ 周/月切换时数字滚动
+        .animation(.snappy(duration: 0.45), value: value)
+        .animation(.snappy(duration: 0.45), value: unit)
     }
 
     // MARK: 周日历
@@ -363,6 +375,7 @@ struct RunSummaryCard: View {
                 Circle()
                     .fill(.runGradient)
                     .frame(width: 20, height: 20)
+                    .transition(.scale.combined(with: .opacity))
             } else if isToday {
                 Circle()
                     .stroke(Color.orange.opacity(0.6), lineWidth: 1)
@@ -375,6 +388,7 @@ struct RunSummaryCard: View {
                                  : (isToday ? Color.orange : Color.primary))
         }
         .frame(height: 20)
+        .animation(.snappy(duration: 0.35), value: didRun)
     }
 
     // MARK: 月历
@@ -414,6 +428,7 @@ struct RunSummaryCard: View {
                 Circle()
                     .fill(.runGradient)
                     .frame(width: 20, height: 20)
+                    .transition(.scale.combined(with: .opacity))
             } else if isToday {
                 Circle()
                     .stroke(Color.orange.opacity(0.6), lineWidth: 1)
@@ -426,6 +441,7 @@ struct RunSummaryCard: View {
                                  : (isToday ? Color.orange : Color.primary))
         }
         .frame(height: 20)
+        .animation(.snappy(duration: 0.35), value: didRun)
     }
 
     private func monthDayDate(_ day: Int) -> Date {

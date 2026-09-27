@@ -20,7 +20,8 @@ struct RunHeroMapView: View {
     var body: some View {
         Group {
             if isLoading {
-                Color(.secondarySystemBackground)
+                HeroMapSkeleton()
+                    .transition(.opacity)
             } else {
                 ZStack(alignment: .bottom) {
                     Map(position: $camera,
@@ -35,7 +36,6 @@ struct RunHeroMapView: View {
                         MapPitchToggle()
                     }
 
-                    // 底部渐变：让内容卡片浮出更自然
                     LinearGradient(
                         colors: [
                             .clear,
@@ -47,8 +47,10 @@ struct RunHeroMapView: View {
                     .frame(height: 110)
                     .allowsHitTesting(false)
                 }
+                .transition(.opacity.combined(with: .scale(scale: 1.015, anchor: .center)))
             }
         }
+        .animation(.smooth(duration: 0.55), value: isLoading)
         .task(id: routeKey) {
             updateCamera()
         }

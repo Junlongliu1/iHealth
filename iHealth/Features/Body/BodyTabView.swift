@@ -16,9 +16,6 @@
 import SwiftUI
 
 struct BodyTabView: View {
-    /// 由 MainTabView 传入，每次切换 tab 时变化，用于重播入场动画
-    let activationID: UUID
-
     @State private var store = BodyMetricsStore.shared
     @State private var activeExplanation: MetricExplanation?
     @State private var showSubScores = false
@@ -81,10 +78,10 @@ struct BodyTabView: View {
             withAnimation(.smooth(duration: 0.45)) {
                 isInitialLoading = false
             }
-            triggerReveal()
-        }
-        .onChange(of: activationID) { _, _ in
-            triggerReveal()
+            // 首屏入场动画：只播一次
+            withAnimation(.spring(response: 0.55, dampingFraction: 0.85)) {
+                revealed = true
+            }
         }
         .sheet(item: $activeExplanation) { explanation in
             MetricExplanationView(explanation: explanation)
@@ -172,6 +169,7 @@ struct BodyTabView: View {
             isRefreshing = false
         }
 
+        // 下拉刷新后重播一次卡片入场（这是用户主动操作，保留）
         withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) {
             revealed = false
         }
@@ -189,20 +187,10 @@ struct BodyTabView: View {
         guard remaining > 0 else { return }
         try? await Task.sleep(for: .seconds(remaining))
     }
-
-    private func triggerReveal() {
-        revealed = false
-        Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(30))
-            withAnimation(.spring(response: 0.55, dampingFraction: 0.85)) {
-                revealed = true
-            }
-        }
-    }
 }
 
 #Preview {
     NavigationStack {
-        BodyTabView(activationID: UUID())
+        BodyTabView()
     }
 }

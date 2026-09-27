@@ -6,7 +6,6 @@
 //
 //  · 定义 AppTab 枚举（body / trend / health / sport / settings）
 //  · 每个 tab 各自包一个 NavigationStack，独立管理导航栈
-//  · 切换 tab 时刷新 activationID，触发内容级联重播
 //
 
 import SwiftUI
@@ -21,14 +20,12 @@ enum AppTab: Hashable {
 
 struct MainTabView: View {
     @State private var selection: AppTab = .body
-    /// 每次切换 tab 时变化，触发内容的级联入场重播
-    @State private var activationID = UUID()
 
     var body: some View {
         TabView(selection: $selection) {
             Tab("身体", systemImage: "figure.mind.and.body", value: AppTab.body) {
                 NavigationStack {
-                    BodyTabView(activationID: activationID)
+                    BodyTabView()
                 }
             }
 
@@ -56,25 +53,6 @@ struct MainTabView: View {
         }
         .tabBarMinimizeBehavior(.onScrollDown)
         .sensoryFeedback(.selection, trigger: selection)
-        .onChange(of: selection) { _, _ in
-            activationID = UUID()
-        }
-    }
-}
-
-// MARK: - 占位页
-
-struct PlaceholderView: View {
-    let title: String
-    let icon: String
-
-    var body: some View {
-        ContentUnavailableView(
-            title,
-            systemImage: icon,
-            description: Text("功能开发中")
-        )
-        .navigationTitle(title)
     }
 }
 

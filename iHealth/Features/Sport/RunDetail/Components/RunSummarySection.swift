@@ -272,7 +272,7 @@ struct RunMetricsGrid: View {
     }
 }
 
-// MARK: - 单个指标列（内容居中）
+// MARK: - 单个指标数据
 
 private struct MetricItem: Identifiable {
     let id = UUID()
@@ -281,6 +281,8 @@ private struct MetricItem: Identifiable {
     let unit: String
     var accent: Bool = false
 }
+
+// MARK: - 单个指标列（内容居中）
 
 private struct MetricColumn: View {
     let item: MetricItem
@@ -309,6 +311,7 @@ private struct MetricColumn: View {
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
+                        .contentTransition(.numericText())
                 }
             }
 
@@ -317,5 +320,7 @@ private struct MetricColumn: View {
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
         }
+        .animation(.snappy(duration: 0.55), value: item.value)
+        .animation(.snappy(duration: 0.55), value: item.unit)
     }
 }

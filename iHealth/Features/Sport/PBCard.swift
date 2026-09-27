@@ -7,9 +7,18 @@
 
 import SwiftUI
 
-/// 个人最好成绩卡片
+/// 个人最好成绩卡片（静默更新：数据变化时只做数字滚动，不闪烁、不重建）
 struct PBCard: View {
     let bests: [PersonalBest]
+
+    /// 数据签名：只有 time 或 date 真发生变化时，才触发动画
+    private var signature: [String] {
+        bests.map { pb in
+            let t = pb.time.map { String(format: "%.2f", $0) } ?? "nil"
+            let d = pb.date.map { String($0.timeIntervalSince1970) } ?? "nil"
+            return "\(pb.label)|\(t)|\(d)"
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -46,6 +55,8 @@ struct PBCard: View {
         .padding(.vertical, 12)
         .frame(maxWidth: .infinity, alignment: .leading)
         .glassEffect(.regular, in: .rect(cornerRadius: 18))
+        // ★ 静默更新：仅在 PB 真变化时触发数字滚动
+        .animation(.snappy(duration: 0.5), value: signature)
     }
 
     private func pbRow(_ pb: PersonalBest) -> some View {
@@ -60,6 +71,8 @@ struct PBCard: View {
                     .font(.system(size: 17, weight: .bold, design: .rounded))
                     .monospacedDigit()
                     .foregroundStyle(.runGradient)
+                    .contentTransition(.numericText())
+                    .transition(.opacity)
 
                 Spacer(minLength: 8)
 
@@ -68,20 +81,27 @@ struct PBCard: View {
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                         .monospacedDigit()
+                        .contentTransition(.numericText())
                 }
             } else {
                 Text("——")
                     .font(.system(size: 15, weight: .semibold, design: .rounded))
                     .foregroundStyle(.tertiary)
+                    .contentTransition(.numericText())
+                    .transition(.opacity)
 
                 Spacer(minLength: 8)
 
                 Text("暂无记录")
                     .font(.system(size: 11))
                     .foregroundStyle(.quaternary)
+                    .transition(.opacity)
             }
         }
         .padding(.vertical, 9)
+        // ★ 每一行独立触发：该行 PB 变化时只滚动这一行
+        .animation(.snappy(duration: 0.5), value: pb.time)
+        .animation(.snappy(duration: 0.5), value: pb.date)
     }
 
     private func formatTime(_ t: TimeInterval) -> String {

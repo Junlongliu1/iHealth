@@ -70,7 +70,8 @@ struct RunDetailView: View {
         }
         .toolbar(.hidden, for: .navigationBar)
         .task {
-            detail = await WorkoutStore.loadRunDetail(for: workout)
+            let loaded = await WorkoutStore.loadRunDetail(for: workout)
+            detail = loaded
             isLoading = false
         }
         .sheet(item: $shareItem) { item in
@@ -133,6 +134,7 @@ struct RunDetailView: View {
             .stroke(Color.primary.opacity(0.06), lineWidth: 0.5)
             .allowsHitTesting(false)
         }
+        .animation(.smooth(duration: 0.55), value: isLoading)
     }
 
     // MARK: - 详情图表卡片
@@ -142,13 +144,16 @@ struct RunDetailView: View {
 
         return VStack(spacing: 14) {
             ShoeAssignmentCard(workout: workout)
+                .transition(.opacity.combined(with: .move(edge: .top)))
 
             if let vo2 = detail?.vo2Max {
                 VO2MaxCard(info: vo2)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
             }
 
             if let splits = detail?.splits, !splits.isEmpty {
                 SplitsTableCard(splits: splits)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
             }
 
             if let hr = detail?.averageHeartRate {
@@ -156,6 +161,7 @@ struct RunDetailView: View {
                     points: s.heartRate,
                     averageValue: hr
                 )
+                .transition(.opacity.combined(with: .move(edge: .top)))
             }
 
             if let pace = detail?.averagePace {
@@ -169,6 +175,7 @@ struct RunDetailView: View {
                     averageValue: pace,
                     yFormat: { RunDetailFormat.paceShortPrecise($0) }
                 )
+                .transition(.opacity.combined(with: .move(edge: .top)))
             }
 
             if let stride = detail?.averageStrideLength {
@@ -182,6 +189,7 @@ struct RunDetailView: View {
                     averageValue: stride,
                     yFormat: { String(format: "%.1f", $0 * 100) }
                 )
+                .transition(.opacity.combined(with: .move(edge: .top)))
             }
 
             if let cadence = detail?.averageCadence {
@@ -195,6 +203,7 @@ struct RunDetailView: View {
                     averageValue: cadence,
                     yFormat: { String(format: "%.1f", $0) }
                 )
+                .transition(.opacity.combined(with: .move(edge: .top)))
             }
 
             if !s.groundContactTime.isEmpty {
@@ -210,6 +219,7 @@ struct RunDetailView: View {
                     averageValue: avg,
                     yFormat: { String(format: "%.1f", $0) }
                 )
+                .transition(.opacity.combined(with: .move(edge: .top)))
             }
 
             if let vo = detail?.verticalOscillation {
@@ -223,6 +233,7 @@ struct RunDetailView: View {
                     averageValue: vo,
                     yFormat: { String(format: "%.2f", $0) }
                 )
+                .transition(.opacity.combined(with: .move(edge: .top)))
             }
 
             if let power = detail?.averagePower {
@@ -236,6 +247,7 @@ struct RunDetailView: View {
                     averageValue: power,
                     yFormat: { String(format: "%.1f", $0) }
                 )
+                .transition(.opacity.combined(with: .move(edge: .top)))
             }
 
             if let elev = detail?.elevationAscended, !s.elevation.isEmpty {
@@ -254,8 +266,10 @@ struct RunDetailView: View {
                     averageValue: avgV,
                     yFormat: { String(format: "%.1f", $0) }
                 )
+                .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
+        .animation(.smooth(duration: 0.45), value: detail != nil)
     }
 
     // MARK: - 分享
