@@ -297,11 +297,11 @@ enum RunDetailFormat {
 
     static func power(_ v: Double?) -> String {
         guard let v else { return "--" }
-        return String(Int(v.rounded()))
+        return String(Int(v))
     }
 
     static func cadence(_ v: Double?) -> String {
         guard let v else { return "--" }
-        return String(Int(v.rounded()))
+        return String(Int(v))
     }
 }

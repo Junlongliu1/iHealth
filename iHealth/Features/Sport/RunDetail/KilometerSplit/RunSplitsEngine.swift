@@ -1,10 +1,247 @@
 //
-//  SplitsCalculator.swift
+//  RunSplitsEngine.swift
 //  iHealth
+//
+//  分段计算的唯一入口：数据拉取 + 分段计算 + 指标聚合，全部集中在此文件。
+//  数据源完全自包含：路由、活动段、样本都在内部获取，不依赖外部传入。
+//  顶部卡片（WorkoutStore.loadRunDetail）的聚合算法与此文件完全独立。
 //
 
 import Foundation
+import HealthKit
 import CoreLocation
+
+// MARK: - 对外入口：拉取 → 计算 → 附加指标
+
+/// 从 HealthKit 拉取一次跑步的全部原始数据，并计算出公里分段。
+/// 数据源完全自包含：路由、活动段、样本都在内部获取，不依赖外部传入。
+enum RunSplitsLoader {
+
+    // MARK: 主入口
+
+    /// 对外主入口：拉取 + 计算 + 附加指标
+    static func load(
+        hkWorkout: HKWorkout,
+        officialDistance: Double?,
+        healthStore: HKHealthStore
+    ) async -> [KilometerSplit] {
+
+        // 分段自己的数据源
+        let activeSegments = extractActiveSegments(from: hkWorkout)
+        let rawLocations = await fetchRoute(for: hkWorkout, healthStore: healthStore)
+        let filteredLocations = filterLocations(rawLocations)
+
+        // 并行拉取原始样本
+        async let speedRaw = RawSampleFetcher.samples(
+            for: hkWorkout,
+            quantityType: HKQuantityType(.runningSpeed),
+            unit: HKUnit.meter().unitDivided(by: .second()),
+            healthStore: healthStore
+        )
+        async let distanceRaw = RawSampleFetcher.distance(
+            for: hkWorkout, healthStore: healthStore
+        )
+        async let hrRaw = RawSampleFetcher.samples(
+            for: hkWorkout,
+            quantityType: HKQuantityType(.heartRate),
+            unit: HKUnit.count().unitDivided(by: .minute()),
+            healthStore: healthStore
+        )
+        async let strideRaw = RawSampleFetcher.samples(
+            for: hkWorkout,
+            quantityType: HKQuantityType(.runningStrideLength),
+            unit: .meter(),
+            healthStore: healthStore
+        )
+        async let powerRaw = RawSampleFetcher.samples(
+            for: hkWorkout,
+            quantityType: HKQuantityType(.runningPower),
+            unit: .watt(),
+            healthStore: healthStore
+        )
+        async let stepRaw = RawSampleFetcher.steps(
+            for: hkWorkout, healthStore: healthStore
+        )
+
+        // 1) 计算原始分段
+        let lapEvents = hkWorkout.workoutEvents?
+            .filter { $0.type == .lap }
+            .map(\.dateInterval) ?? []
+
+        let rawSplits = SplitsCalculator.compute(
+            officialDistance: officialDistance,
+            workoutStartDate: hkWorkout.startDate,
+            workoutEndDate: hkWorkout.endDate,
+            lapEvents: lapEvents,
+            locations: filteredLocations,
+            activeSegments: activeSegments,
+            speedSamples: await speedRaw,
+            distanceSamples: await distanceRaw
+        )
+
+        // 2) 起点对齐修正（-3s）
+        let adjusted = SplitsCalculator.adjustFirstSplit(rawSplits, offset: -3)
+
+        // 3) 附加每段指标
+        return SplitsCalculator.attachDetails(
+            splits: adjusted,
+            activeSegments: activeSegments,
+            heartRate: await hrRaw,
+            strideLength: await strideRaw,
+            stepCount: await stepRaw,
+            power: await powerRaw
+        )
+    }
+
+    // MARK: - 分段私有：活动段解析
+
+    /// 提取并合并 HKWorkout 中的活动段。
+    /// 优先用 `.segment` 事件；缺失时从 `.pause` / `.resume` 拼出活动段。
+    private static func extractActiveSegments(from hkWorkout: HKWorkout) -> [DateInterval] {
+        guard let events = hkWorkout.workoutEvents, !events.isEmpty else { return [] }
+
+        // 1) 优先：segment 事件
+        let segments = events
+            .filter { $0.type == .segment }
+            .map { $0.dateInterval }
+
+        if !segments.isEmpty {
+            return merge(segments)
+        }
+
+        // 2) 回退：从 pause / resume 拼活动段
+        let pauses = events
+            .filter { $0.type == .pause }
+            .map { $0.dateInterval.start }
+            .sorted()
+
+        guard !pauses.isEmpty else { return [] }
+
+        let resumes = events
+            .filter { $0.type == .resume }
+            .map { $0.dateInterval.start }
+            .sorted()
+
+        var active: [DateInterval] = []
+        var cursor = hkWorkout.startDate
+        var resumeIdx = 0
+
+        for pauseStart in pauses {
+            if cursor < pauseStart {
+                active.append(DateInterval(start: cursor, end: pauseStart))
+            }
+            while resumeIdx < resumes.count, resumes[resumeIdx] <= pauseStart {
+                resumeIdx += 1
+            }
+            if resumeIdx < resumes.count {
+                cursor = resumes[resumeIdx]
+                resumeIdx += 1
+            } else {
+                cursor = hkWorkout.endDate
+                break
+            }
+        }
+
+        if cursor < hkWorkout.endDate {
+            active.append(DateInterval(start: cursor, end: hkWorkout.endDate))
+        }
+
+        return merge(active)
+    }
+
+    /// 合并重叠的区间
+    private static func merge(_ intervals: [DateInterval]) -> [DateInterval] {
+        guard !intervals.isEmpty else { return [] }
+        let sorted = intervals.sorted { $0.start < $1.start }
+        var merged: [DateInterval] = [sorted[0]]
+        for i in 1..<sorted.count {
+            let last = merged[merged.count - 1]
+            if sorted[i].start <= last.end {
+                merged[merged.count - 1] = DateInterval(
+                    start: last.start,
+                    end: max(last.end, sorted[i].end)
+                )
+            } else {
+                merged.append(sorted[i])
+            }
+        }
+        return merged
+    }
+
+    // MARK: - 分段私有：路由拉取与过滤
+
+    /// 拉取 workout 的原始路线点
+    private static func fetchRoute(
+        for hkWorkout: HKWorkout,
+        healthStore: HKHealthStore
+    ) async -> [CLLocation] {
+        let routes: [HKWorkoutRoute] = await withCheckedContinuation { c in
+            let predicate = HKQuery.predicateForObjects(from: hkWorkout)
+            let query = HKSampleQuery(
+                sampleType: HKSeriesType.workoutRoute(),
+                predicate: predicate,
+                limit: 1,
+                sortDescriptors: nil
+            ) { _, samples, _ in
+                c.resume(returning: (samples as? [HKWorkoutRoute]) ?? [])
+            }
+            healthStore.execute(query)
+        }
+
+        guard let route = routes.first else { return [] }
+
+        return await withCheckedContinuation { c in
+            var locations: [CLLocation] = []
+            var resumed = false
+            let query = HKWorkoutRouteQuery(route: route) { _, batch, done, _ in
+                if let batch { locations.append(contentsOf: batch) }
+                if done, !resumed {
+                    resumed = true
+                    c.resume(returning: locations)
+                }
+            }
+            healthStore.execute(query)
+        }
+    }
+
+    /// 分段口径的精度 + 速度过滤
+    private static func filterLocations(_ locations: [CLLocation]) -> [CLLocation] {
+        var filtered: [CLLocation] = []
+        var lastKept: CLLocation?
+        let maxSpeed: Double = 12.0
+
+        for location in locations {
+            guard location.horizontalAccuracy >= 0,
+                  location.horizontalAccuracy <= 100 else { continue }
+
+            guard let last = lastKept else {
+                filtered.append(location)
+                lastKept = location
+                continue
+            }
+
+            let dt = location.timestamp.timeIntervalSince(last.timestamp)
+            guard dt > 0 else { continue }
+
+            let distance = location.distance(from: last)
+            if distance < 3 {
+                filtered.append(location)
+                lastKept = location
+                continue
+            }
+
+            let speed = distance / dt
+            if speed <= maxSpeed {
+                filtered.append(location)
+                lastKept = location
+            }
+        }
+
+        return filtered
+    }
+}
+
+// MARK: - 纯函数计算引擎
 
 /// 公里分段的计算引擎（纯函数）
 enum SplitsCalculator {
@@ -12,14 +249,6 @@ enum SplitsCalculator {
     // MARK: - 主入口
 
     /// 计算公里分段。优先使用 lap events，否则回退到距离曲线切分。
-    /// - Parameters:
-    ///   - officialDistance: 官方总距离（来自 workout.distance），用于校准
-    ///   - workoutStartDate / workoutEndDate: 整体时间范围
-    ///   - lapEvents: HKWorkout 中 type == .lap 的事件区间
-    ///   - locations: 已过滤的轨迹点（按时间升序）
-    ///   - activeSegments: HKWorkout 的活动段（用于剔除暂停时间）
-    ///   - speedSamples: 速度样本（米/秒）
-    ///   - distanceSamples: 距离增量样本（米，使用 endDate 归位）
     static func compute(
         officialDistance: Double?,
         workoutStartDate: Date,
@@ -238,8 +467,6 @@ enum SplitsCalculator {
     // MARK: - 附加每段聚合指标
 
     /// 为分段附加心率 / 步幅 / 步频 / 功率等聚合指标
-    /// - Note: 使用"墙钟时间"作为区间（下一段的 startDate 作为本段 end），
-    ///         再通过 activeSegments 剔除暂停时间，使样本统计更准确。
     static func attachDetails(
         splits: [KilometerSplit],
         activeSegments: [DateInterval],
@@ -371,5 +598,117 @@ enum SplitsCalculator {
             startDate: first.startDate
         )
         return copy
+    }
+}
+
+// MARK: - 原始样本抓取（仅供分段路径使用）
+
+private enum RawSampleFetcher {
+
+    /// 通用离散样本（心率 / 步幅 / 功率 / 速度）
+    static func samples(
+        for hkWorkout: HKWorkout,
+        quantityType: HKQuantityType,
+        unit: HKUnit,
+        healthStore: HKHealthStore
+    ) async -> [MetricPoint] {
+        let predicate = HKQuery.predicateForSamples(
+            withStart: hkWorkout.startDate,
+            end: hkWorkout.endDate,
+            options: .strictStartDate
+        )
+        return await withCheckedContinuation { continuation in
+            let q = HKSampleQuery(
+                sampleType: quantityType,
+                predicate: predicate,
+                limit: HKObjectQueryNoLimit,
+                sortDescriptors: [
+                    NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: true)
+                ]
+            ) { _, samples, _ in
+                let pts: [MetricPoint] = (samples as? [HKQuantitySample])?
+                    .compactMap {
+                        let v = $0.quantity.doubleValue(for: unit)
+                        guard v.isFinite, v > 0 else { return nil }
+                        return MetricPoint(date: $0.startDate, value: v)
+                    } ?? []
+                continuation.resume(returning: pts)
+            }
+            healthStore.execute(q)
+        }
+    }
+
+    /// distanceWalkingRunning：同源过滤 + 用 endDate 归位
+    static func distance(
+        for hkWorkout: HKWorkout,
+        healthStore: HKHealthStore
+    ) async -> [MetricPoint] {
+        let type = HKQuantityType(.distanceWalkingRunning)
+        let timePredicate = HKQuery.predicateForSamples(
+            withStart: hkWorkout.startDate,
+            end: hkWorkout.endDate,
+            options: .strictStartDate
+        )
+        let sourcePredicate = HKQuery.predicateForObjects(from: hkWorkout.sourceRevision.source)
+        let combined = NSCompoundPredicate(andPredicateWithSubpredicates: [
+            timePredicate, sourcePredicate
+        ])
+
+        return await withCheckedContinuation { continuation in
+            let q = HKSampleQuery(
+                sampleType: type,
+                predicate: combined,
+                limit: HKObjectQueryNoLimit,
+                sortDescriptors: [
+                    NSSortDescriptor(key: HKSampleSortIdentifierEndDate, ascending: true)
+                ]
+            ) { _, samples, _ in
+                let pts: [MetricPoint] = (samples as? [HKQuantitySample])?
+                    .compactMap {
+                        let m = $0.quantity.doubleValue(for: .meter())
+                        guard m.isFinite, m > 0 else { return nil }
+                        return MetricPoint(date: $0.endDate, value: m)
+                    } ?? []
+                continuation.resume(returning: pts)
+            }
+            healthStore.execute(q)
+        }
+    }
+
+    /// stepCount：同源过滤
+    static func steps(
+        for hkWorkout: HKWorkout,
+        healthStore: HKHealthStore
+    ) async -> [MetricPoint] {
+        let type = HKQuantityType(.stepCount)
+        let timePredicate = HKQuery.predicateForSamples(
+            withStart: hkWorkout.startDate,
+            end: hkWorkout.endDate,
+            options: .strictStartDate
+        )
+        let sourcePredicate = HKQuery.predicateForObjects(from: hkWorkout.sourceRevision.source)
+        let combined = NSCompoundPredicate(andPredicateWithSubpredicates: [
+            timePredicate, sourcePredicate
+        ])
+
+        return await withCheckedContinuation { continuation in
+            let q = HKSampleQuery(
+                sampleType: type,
+                predicate: combined,
+                limit: HKObjectQueryNoLimit,
+                sortDescriptors: [
+                    NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: true)
+                ]
+            ) { _, samples, _ in
+                let pts: [MetricPoint] = (samples as? [HKQuantitySample])?
+                    .compactMap {
+                        let c = $0.quantity.doubleValue(for: .count())
+                        guard c.isFinite, c > 0 else { return nil }
+                        return MetricPoint(date: $0.startDate, value: c)
+                    } ?? []
+                continuation.resume(returning: pts)
+            }
+            healthStore.execute(q)
+        }
     }
 }
