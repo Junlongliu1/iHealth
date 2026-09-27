@@ -72,6 +72,8 @@ struct RecoveryCard: View {
         }
         .padding(14)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        // 先裁剪内容，再绘制玻璃背景：让卡片圆角成为硬边界
+        .clipShape(RoundedRectangle(cornerRadius: cardRadius, style: .continuous))
         .glassEffect(.regular, in: .rect(cornerRadius: cardRadius))
     }
 

@@ -4,7 +4,7 @@
 //  职责：全局视觉基础设施。
 //
 //  · EnvironmentValues 扩展 —— cardCornerRadius / cardPadding / cardSpacing
-//  · glassCard(...)          —— 玻璃卡片统一修饰符
+//  · glassCard(...)          —— 玻璃卡片统一修饰符（含硬边界裁剪）
 //  · cardReveal(...)         —— 卡片入场动画（淡入 + 上移 + 模糊消散）
 //  · accessibilityDecorative —— 装饰性元素 a11y 简写
 //  · PulsingHeartLoader      —— 加载动画（脉冲心跳 + 扩散波纹）
@@ -27,12 +27,18 @@ extension EnvironmentValues {
 
 extension View {
 
+    /// 统一玻璃卡片。
+    ///
+    /// 顺序很关键：`padding → clipShape → glassEffect`
+    /// · clipShape 让"卡片圆角"成为真正的物理边界，内容（含 ScrollView 溢出）会被裁掉；
+    /// · glassEffect 在裁剪后的边界上绘制玻璃背景，保持完整不被切。
     func glassCard(
         cornerRadius: CGFloat = 16,
         padding: CGFloat = 16
     ) -> some View {
         self
             .padding(padding)
+            .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
             .glassEffect(.regular, in: .rect(cornerRadius: cornerRadius))
     }
 
@@ -43,6 +49,7 @@ extension View {
     ) -> some View {
         self
             .padding(padding)
+            .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
             .glassEffect(
                 .regular.tint(tint.opacity(0.18)),
                 in: .rect(cornerRadius: cornerRadius)

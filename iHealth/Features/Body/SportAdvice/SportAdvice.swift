@@ -3,10 +3,12 @@
 //
 //  职责：运动建议生成引擎（纯函数，无状态）。
 //
-//  · level(for:)            —— 由 readiness / tsb 判定强度等级
-//                              （rest / easy / moderate / hard）
-//  · advice(for:snapshot:)  —— 组合"运动类型 + 强度等级"
-//                              输出建议文案（SportAdvice）
+//  · baseLevel(for:)              —— 由 readiness 判定基础强度等级，
+//                                    TSB 仅在极端值时一票否决
+//  · adjustedLevel(_:for:)        —— 按运动类型调整
+//                                    （羽毛球/登山降档，骑行升档）
+//  · trendAdjusted(_:recent:)     —— 连续低准备度时降档
+//  · advice(for:snapshot:...)     —— 组合输出建议文案
 //
 //  输出纯数据，渲染交给 SportAdviceCard。
 
@@ -35,19 +37,102 @@ struct SportAdvice {
 
 enum SportAdviceEngine {
 
-    static func advice(for sport: SportType, snapshot s: ReadinessSnapshot) -> SportAdvice {
-        let level = level(for: s)
-        return advice(for: sport, level: level, snapshot: s)
+    // MARK: 公开入口
+
+    static func advice(
+        for sport: SportType,
+        snapshot s: ReadinessSnapshot,
+        recentSnapshots: [ReadinessSnapshot] = []
+    ) -> SportAdvice {
+        // 1. 基础等级：以 readiness 为主，TSB 仅极端值否决
+        let base = baseLevel(for: s)
+
+        // 2. 按运动类型调整（高冲击降档 / 低冲击升档）
+        let adjusted = adjustedLevel(base, for: sport)
+
+        // 3. 连续疲劳降档
+        let final = trendAdjusted(adjusted, recentSnapshots: recentSnapshots)
+
+        return advice(for: sport, level: final, snapshot: s)
     }
 
-    // 根据准备度和 TSB 确定强度等级
-    private static func level(for s: ReadinessSnapshot) -> SportAdviceLevel {
-        if s.tsb < -30 { return .rest }
-        if s.readiness >= 85 && s.tsb >= -10 { return .hard }
-        if s.readiness >= 70 && s.tsb >= -20 { return .moderate }
-        if s.readiness >= 50 && s.tsb >= -30 { return .easy }
-        return .rest
+    // MARK: - 等级判定
+
+    /// 基础强度等级：准备度为主判据，TSB 只在极端值时否决。
+    /// readiness 本身已经包含 TSB 的加权贡献，所以这里不再用 TSB 硬门槛，
+    /// 避免 TSB 被重复计算导致误判。
+    private static func baseLevel(for s: ReadinessSnapshot) -> SportAdviceLevel {
+        // 极端疲劳：无条件休息
+        if s.tsb < -35 { return .rest }
+
+        switch s.readiness {
+        case 85...:
+            // 准备度极高，但 TSB 明显偏负时降为 moderate（避免带疲劳硬上强度）
+            return s.tsb < -15 ? .moderate : .hard
+        case 70..<85:
+            return .moderate
+        case 50..<70:
+            return .easy
+        case 30..<50:
+            // 低准备度但 TSB 很正（可能停训多天），允许轻松活动
+            return s.tsb > 10 ? .easy : .rest
+        default:
+            return .rest
+        }
     }
+
+    /// 按运动类型调整：
+    /// · 羽毛球、登山：神经/关节冲击大，恢复成本高 → 降一档
+    /// · 骑行：低冲击，恢复成本低 → 升一档
+    /// · 其余（跑步 / 徒步 / 步行 / 其他）：保持
+    private static func adjustedLevel(
+        _ base: SportAdviceLevel,
+        for sport: SportType
+    ) -> SportAdviceLevel {
+        switch sport {
+        case .badminton, .mountaineering:
+            return downshift(base)
+        case .cycling:
+            return upshift(base)
+        default:
+            return base
+        }
+    }
+
+    /// 连续疲劳检测：近 3 天中有 ≥ 3 天 readiness < 60 时降一档。
+    /// 单日偏低可能是偶然（睡差一晚），连续偏低才代表累积疲劳。
+    private static func trendAdjusted(
+        _ level: SportAdviceLevel,
+        recentSnapshots: [ReadinessSnapshot]
+    ) -> SportAdviceLevel {
+        let recent = recentSnapshots.suffix(3)
+        guard recent.count >= 3 else { return level }
+
+        let lowDays = recent.filter { $0.readiness < 60 }.count
+        return lowDays >= 3 ? downshift(level) : level
+    }
+
+    // MARK: - 等级升降
+
+    private static func downshift(_ l: SportAdviceLevel) -> SportAdviceLevel {
+        switch l {
+        case .hard:     return .moderate
+        case .moderate: return .easy
+        case .easy:     return .rest
+        case .rest:     return .rest
+        }
+    }
+
+    private static func upshift(_ l: SportAdviceLevel) -> SportAdviceLevel {
+        switch l {
+        case .rest:     return .easy
+        case .easy:     return .moderate
+        case .moderate: return .hard
+        case .hard:     return .hard
+        }
+    }
+
+    // MARK: - 分发
 
     private static func advice(
         for sport: SportType,
@@ -58,20 +143,13 @@ enum SportAdviceEngine {
         let tsb = String(format: "%+.0f", s.tsb)
 
         switch sport {
-        case .running:
-            return runningAdvice(level: level, readiness: readiness, tsb: tsb)
-        case .walking:
-            return walkingAdvice(level: level, readiness: readiness, tsb: tsb)
-        case .badminton:
-            return badmintonAdvice(level: level, readiness: readiness, tsb: tsb)
-        case .hiking:
-            return hikingAdvice(level: level, readiness: readiness, tsb: tsb)
-        case .mountaineering:
-            return mountaineeringAdvice(level: level, readiness: readiness, tsb: tsb)
-        case .cycling:
-            return cyclingAdvice(level: level, readiness: readiness, tsb: tsb)
-        case .other:
-            return genericAdvice(level: level, readiness: readiness, tsb: tsb)
+        case .running:        return runningAdvice(level: level, readiness: readiness, tsb: tsb)
+        case .walking:        return walkingAdvice(level: level, readiness: readiness, tsb: tsb)
+        case .badminton:      return badmintonAdvice(level: level, readiness: readiness, tsb: tsb)
+        case .hiking:         return hikingAdvice(level: level, readiness: readiness, tsb: tsb)
+        case .mountaineering: return mountaineeringAdvice(level: level, readiness: readiness, tsb: tsb)
+        case .cycling:        return cyclingAdvice(level: level, readiness: readiness, tsb: tsb)
+        case .other:          return genericAdvice(level: level, readiness: readiness, tsb: tsb)
         }
     }
 
@@ -83,7 +161,7 @@ enum SportAdviceEngine {
             return SportAdvice(
                 tag: "休息",
                 title: "不建议跑步",
-                detail: "准备度 \(readiness)，TSB \(tsb)。建议完全休息，或只做散步和拉伸。",
+                detail: "准备度 \(readiness)，TSB \(tsb)。身体需要恢复，建议完全休息或只做散步拉伸。",
                 icon: "bed.double.fill",
                 color: .red
             )

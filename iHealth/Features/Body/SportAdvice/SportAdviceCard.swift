@@ -15,10 +15,16 @@ struct SportAdviceCard: View {
     let snapshot: ReadinessSnapshot
     @Binding var selectedSport: SportType
 
+    @State private var store = BodyMetricsStore.shared
+
     @Environment(\.cardCornerRadius) private var cardRadius
 
     private var advice: SportAdvice {
-        SportAdviceEngine.advice(for: selectedSport, snapshot: snapshot)
+        SportAdviceEngine.advice(
+            for: selectedSport,
+            snapshot: snapshot,
+            recentSnapshots: store.allSnapshots
+        )
     }
 
     var body: some View {
@@ -36,22 +42,25 @@ struct SportAdviceCard: View {
     // MARK: - 运动选择器
 
     private var sportPicker: some View {
-        GlassEffectContainer(spacing: 8) {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    ForEach(SportType.allCases) { sport in
-                        SportChip(
-                            sport: sport,
-                            isSelected: sport == selectedSport
-                        ) {
-                            withAnimation(.snappy(duration: 0.32)) {
-                                selectedSport = sport
-                            }
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(SportType.allCases) { sport in
+                    SportChip(
+                        sport: sport,
+                        isSelected: sport == selectedSport
+                    ) {
+                        withAnimation(.snappy(duration: 0.32)) {
+                            selectedSport = sport
                         }
                     }
                 }
             }
+            // 给 chip 的 glass 上下留空间，避免被裁到边缘
+            .padding(.vertical, 4)
         }
+        // 强制 ScrollView 占满父级可用宽度，不随内容膨胀，
+        // 这样 clipShape 的边界才会落在卡片圆角上。
+        .frame(maxWidth: .infinity)
     }
 
     // MARK: - 建议正文
