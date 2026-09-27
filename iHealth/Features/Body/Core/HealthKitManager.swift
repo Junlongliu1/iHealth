@@ -176,6 +176,34 @@ extension HealthKitManager {
             values.reduce(0, +) / Double(values.count)
         }
     }
+
+    /// 返回过去 N 天静息心率的中位数，用于个人资料页的 Karvonen 计算。
+    /// 中位数比均值更稳健，能排除咖啡因/酒精/生病导致的异常值。
+    func fetchRestingHRMedian(days: Int = 14) async -> Double? {
+        guard let rhrType = HKQuantityType.quantityType(forIdentifier: .restingHeartRate) else {
+            return nil
+        }
+        let end = Date()
+        let start = Calendar.current.date(byAdding: .day, value: -days, to: end) ?? end
+        let predicate = HKQuery.predicateForSamples(withStart: start, end: end, options: .strictStartDate)
+        let descriptor = HKSampleQueryDescriptor(
+            predicates: [.quantitySample(type: rhrType, predicate: predicate)],
+            sortDescriptors: [SortDescriptor(\.startDate)]
+        )
+        guard let samples = try? await descriptor.result(for: healthStore) else { return nil }
+
+        let values = samples
+            .map { $0.quantity.doubleValue(for: HKUnit(from: "count/min")) }
+            .filter { $0 > 0 }
+        guard !values.isEmpty else { return nil }
+
+        let sorted = values.sorted()
+        let n = sorted.count
+        if n % 2 == 0 {
+            return (sorted[n/2 - 1] + sorted[n/2]) / 2
+        }
+        return sorted[n/2]
+    }
 }
 
 // MARK: - 睡眠

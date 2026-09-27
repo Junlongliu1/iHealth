@@ -49,16 +49,20 @@ enum SportType: String, Codable, CaseIterable, Identifiable {
         }
     }
 
-    /// 阈值心率默认占最大心率的比例
+    /// 默认阈值心率系数（Karvonen / HRR 基准）
+    ///
+    /// 目标阈值 = HRrest + (HRmax − HRrest) × 该系数。
+    /// 换算自常见 HRmax 系数（如跑步 85% HRmax ≈ 78% HRR），
+    /// 让阈值心率在不同静息心率的个体间具备生理等效性。
     var defaultThresholdFraction: Double {
         switch self {
-        case .running:        return 0.85
-        case .walking:        return 0.70
-        case .badminton:      return 0.85
-        case .hiking:         return 0.75
-        case .mountaineering: return 0.78
-        case .cycling:        return 0.85
-        case .other:          return 0.80
+        case .running:        return 0.78
+        case .walking:        return 0.56
+        case .badminton:      return 0.78
+        case .hiking:         return 0.64
+        case .mountaineering: return 0.68
+        case .cycling:        return 0.78
+        case .other:          return 0.71
         }
     }
 
