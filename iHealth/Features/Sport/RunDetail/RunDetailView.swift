@@ -148,15 +148,9 @@ struct RunDetailView: View {
             }
 
             if let hr = detail?.averageHeartRate {
-                RunMetricChartCard(
-                    title: "心率",
-                    icon: "heart.fill",
-                    color: .red,
-                    unit: "bpm",
+                RunHeartRateCard(
                     points: s.heartRate,
-                    statLabel: "平均 \(RunDetailFormat.heartRate(hr))",
-                    averageValue: hr,
-                    yFormat: { "\(Int($0))" }
+                    averageValue: hr
                 )
             }
 
