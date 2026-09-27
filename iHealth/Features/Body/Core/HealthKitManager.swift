@@ -13,7 +13,8 @@ final class HealthKitManager {
 
     static let shared = HealthKitManager()
 
-    private let healthStore = HKHealthStore()
+    // ★ 改为共享实例
+    private let healthStore = HKHealthStore.shared
 
     var isAuthorized = false
     var authorizationError: String?
@@ -22,7 +23,8 @@ final class HealthKitManager {
 
     // MARK: - 授权
 
-    private var readTypes: Set<HKObjectType> {
+    // ★ 改成静态，避免每次实例化都重建
+    private static let readTypes: Set<HKObjectType> = {
         var types: Set<HKObjectType> = []
         if let hrv = HKQuantityType.quantityType(forIdentifier: .heartRateVariabilitySDNN) {
             types.insert(hrv)
@@ -38,7 +40,7 @@ final class HealthKitManager {
         }
         types.insert(HKObjectType.workoutType())
         return types
-    }
+    }()
 
     /// 若此前已授权过，跳过再次弹窗。
     func requestAuthorization() async {
@@ -55,7 +57,10 @@ final class HealthKitManager {
         }
 
         do {
-            try await healthStore.requestAuthorization(toShare: [], read: readTypes)
+            try await healthStore.requestAuthorization(
+                toShare: [],
+                read: Self.readTypes
+            )
             isAuthorized = true
             authorizationError = nil
         } catch {

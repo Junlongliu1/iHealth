@@ -10,7 +10,13 @@ import CoreLocation
 
 @Observable
 final class WorkoutStore {
-    private let healthStore = HKHealthStore()
+
+    // MARK: - 共享 HealthKit Store
+
+    /// 全 App 共享的唯一 HKHealthStore 实例（见 HealthStoreShared.swift）
+    private let healthStore = HKHealthStore.shared
+
+    // MARK: - 状态
 
     var workouts: [Workout] = []
     var isLoading = false
@@ -20,7 +26,9 @@ final class WorkoutStore {
     var personalBests: [PersonalBest] = []
     private var hasLoadedSplits = false
 
-    private var typesToRead: Set<HKObjectType> {
+    // MARK: - 授权读取类型（静态构建，只跑一次）
+
+    private static let typesToRead: Set<HKObjectType> = {
         var set: Set<HKObjectType> = [HKObjectType.workoutType()]
 
         let quantityIDs: [HKQuantityTypeIdentifier] = [
@@ -54,7 +62,7 @@ final class WorkoutStore {
         }
 
         return set
-    }
+    }()
 
     // MARK: - 请求授权
 
@@ -65,7 +73,10 @@ final class WorkoutStore {
         }
 
         do {
-            try await healthStore.requestAuthorization(toShare: [], read: typesToRead)
+            try await healthStore.requestAuthorization(
+                toShare: [],
+                read: Self.typesToRead
+            )
         } catch {
             errorMessage = "授权失败：\(error.localizedDescription)"
         }
@@ -108,7 +119,7 @@ final class WorkoutStore {
 
     static func loadRunDetail(
         for workout: Workout,
-        healthStore: HKHealthStore = HKHealthStore()
+        healthStore: HKHealthStore = .shared   // ★ 共享实例，避免每次调用都 new
     ) async -> RunDetail? {
         guard let hkWorkout = await fetchHKWorkout(
             uuid: workout.id,
@@ -201,13 +212,56 @@ final class WorkoutStore {
         let sourceName = hkWorkout.sourceRevision.source.name
 
         // 时间序列（图表用）
-        async let heartRateSeries = Self.fetchSeries(for: hkWorkout, quantityType: HKQuantityType(.heartRate), unit: bpm, healthStore: healthStore, options: .discreteAverage)
-        async let speedSeries = Self.fetchSeries(for: hkWorkout, quantityType: HKQuantityType(.runningSpeed), unit: HKUnit.meter().unitDivided(by: .second()), healthStore: healthStore, options: .discreteAverage, transform: { $0 > 0.5 ? 1000.0 / $0 : 0 })
-        async let strideSeries = Self.fetchSeries(for: hkWorkout, quantityType: HKQuantityType(.runningStrideLength), unit: .meter(), healthStore: healthStore, options: .discreteAverage)
-        async let cadenceSeries = Self.fetchSeries(for: hkWorkout, quantityType: HKQuantityType(.stepCount), unit: .count(), healthStore: healthStore, options: .cumulativeSum)
-        async let gctSeries = Self.fetchSeries(for: hkWorkout, quantityType: HKQuantityType(.runningGroundContactTime), unit: .secondUnit(with: .milli), healthStore: healthStore, options: .discreteAverage)
-        async let voSeries = Self.fetchSeries(for: hkWorkout, quantityType: HKQuantityType(.runningVerticalOscillation), unit: .meterUnit(with: .centi), healthStore: healthStore, options: .discreteAverage)
-        async let powerSeries = Self.fetchSeries(for: hkWorkout, quantityType: HKQuantityType(.runningPower), unit: .watt(), healthStore: healthStore, options: .discreteAverage)
+        async let heartRateSeries = Self.fetchSeries(
+            for: hkWorkout,
+            quantityType: HKQuantityType(.heartRate),
+            unit: bpm,
+            healthStore: healthStore,
+            options: .discreteAverage
+        )
+        async let speedSeries = Self.fetchSeries(
+            for: hkWorkout,
+            quantityType: HKQuantityType(.runningSpeed),
+            unit: HKUnit.meter().unitDivided(by: .second()),
+            healthStore: healthStore,
+            options: .discreteAverage,
+            transform: { $0 > 0.5 ? 1000.0 / $0 : 0 }
+        )
+        async let strideSeries = Self.fetchSeries(
+            for: hkWorkout,
+            quantityType: HKQuantityType(.runningStrideLength),
+            unit: .meter(),
+            healthStore: healthStore,
+            options: .discreteAverage
+        )
+        async let cadenceSeries = Self.fetchSeries(
+            for: hkWorkout,
+            quantityType: HKQuantityType(.stepCount),
+            unit: .count(),
+            healthStore: healthStore,
+            options: .cumulativeSum
+        )
+        async let gctSeries = Self.fetchSeries(
+            for: hkWorkout,
+            quantityType: HKQuantityType(.runningGroundContactTime),
+            unit: .secondUnit(with: .milli),
+            healthStore: healthStore,
+            options: .discreteAverage
+        )
+        async let voSeries = Self.fetchSeries(
+            for: hkWorkout,
+            quantityType: HKQuantityType(.runningVerticalOscillation),
+            unit: .meterUnit(with: .centi),
+            healthStore: healthStore,
+            options: .discreteAverage
+        )
+        async let powerSeries = Self.fetchSeries(
+            for: hkWorkout,
+            quantityType: HKQuantityType(.runningPower),
+            unit: .watt(),
+            healthStore: healthStore,
+            options: .discreteAverage
+        )
 
         let elevationSeries: [MetricPoint] = {
             var points: [MetricPoint] = []

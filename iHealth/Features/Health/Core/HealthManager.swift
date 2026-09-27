@@ -67,7 +67,7 @@ enum SleepDay {
 final class HealthManager {
     static let shared = HealthManager()
 
-    @ObservationIgnored private let healthStore = HKHealthStore()
+    @ObservationIgnored private let healthStore = HKHealthStore.shared
 
     var activitySummary: HKActivitySummary?
     var sleepSamples: [HKCategorySample] = []
