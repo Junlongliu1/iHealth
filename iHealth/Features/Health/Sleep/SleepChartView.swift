@@ -3,10 +3,9 @@
 //  iHealth
 //
 //  睡眠数据图表视图。
-//  使用 Swift Charts 绘制睡眠阶段图。
-//  各阶段色块水平 + 竖直方向都首尾相连，形成连续带。
-//  支持点击查看某段阶段的详细信息，选中位置显示竖线。
-//  仅适配 iOS 26+。
+//  同一阶段的相邻时间段合并为连续色块；
+//  上下相邻阶段略微重叠，让圆角缝隙被互相遮盖，
+//  视觉上既连续又保留左右圆角。仅适配 iOS 26+。
 //
 
 import SwiftUI
@@ -15,9 +14,6 @@ import HealthKit
 
 struct SleepChartView: View {
     let samples: [HKCategorySample]
-
-    /// 是否显示坐标轴与网格线，以及是否启用选择交互。
-    /// 详情页用 true（默认），首页正方形卡片用 false（简洁模式）。
     var showsAxes: Bool = true
 
     @State private var selectedDate: Date?
@@ -29,11 +25,32 @@ struct SleepChartView: View {
         let stage: SleepStage
     }
 
+    private var rawEntries: [SleepEntry] {
+        samples
+            .compactMap { sample in
+                guard let stage = SleepStage.from(sample.value) else { return nil }
+                return SleepEntry(start: sample.startDate, end: sample.endDate, stage: stage)
+            }
+            .sorted { $0.start < $1.start }
+    }
+
+    /// 合并同一阶段的相邻时间段，消除水平接缝
     private var entries: [SleepEntry] {
-        samples.compactMap { sample in
-            guard let stage = SleepStage.from(sample.value) else { return nil }
-            return SleepEntry(start: sample.startDate, end: sample.endDate, stage: stage)
+        var result: [SleepEntry] = []
+        for entry in rawEntries {
+            if let last = result.last,
+               last.stage == entry.stage,
+               entry.start <= last.end {
+                result[result.count - 1] = SleepEntry(
+                    start: last.start,
+                    end: max(last.end, entry.end),
+                    stage: last.stage
+                )
+            } else {
+                result.append(entry)
+            }
         }
+        return result
     }
 
     private var selectedEntry: SleepEntry? {
@@ -52,17 +69,25 @@ struct SleepChartView: View {
         return minDate.addingTimeInterval(-pad)...maxDate.addingTimeInterval(pad)
     }
 
+    // MARK: - 布局参数
+
+    /// 色块垂直半高。> 0.5 让上下相邻阶段重叠，遮住圆角缝隙。
+    /// 0.55 → 重叠 0.1 行高，足以盖住 3pt 圆角。
+    private let bandHalfHeight: Double = 0.55
+    /// 左右圆角半径（只影响水平边缘的视觉，垂直方向靠重叠遮缝）。
+    private let bandCornerRadius: CGFloat = 3
+
     var body: some View {
         Chart {
             ForEach(entries) { entry in
                 RectangleMark(
                     xStart: .value("开始", entry.start),
                     xEnd:   .value("结束", entry.end),
-                    yStart: .value("下", entry.stage.plotIndex - 0.5),
-                    yEnd:   .value("上", entry.stage.plotIndex + 0.5)
+                    yStart: .value("下", entry.stage.plotIndex - bandHalfHeight),
+                    yEnd:   .value("上", entry.stage.plotIndex + bandHalfHeight)
                 )
-                .foregroundStyle(by: .value("阶段", entry.stage.label))
-                .cornerRadius(0)
+                .foregroundStyle(entry.stage.color)
+                .cornerRadius(bandCornerRadius)
             }
 
             if let date = selectedDate, showsAxes {
@@ -72,24 +97,19 @@ struct SleepChartView: View {
                     .zIndex(1)
             }
         }
-        .chartForegroundStyleScale(
-            domain: SleepStage.allCases.map { $0.label },
-            range:  SleepStage.allCases.map { $0.color }
-        )
-        .chartYScale(domain: -0.5...3.5)
+        // 上下各留 0.05 行高，容纳超出 0.5 的部分
+        .chartYScale(domain: -0.55...3.55)
         .chartXScale(domain: xDomain)
         .chartXAxis {
             if showsAxes {
                 AxisMarks(values: .stride(by: .hour, count: 2)) { value in
-                    AxisGridLine(
-                        stroke: StrokeStyle(lineWidth: 0.5, dash: [2, 3])
-                    )
-                    .foregroundStyle(Color.primary.opacity(0.12))
+                    AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5, dash: [2, 3]))
+                        .foregroundStyle(Color.primary.opacity(0.12))
 
                     AxisValueLabel {
                         if let date = value.as(Date.self) {
                             Text(date, format: .dateTime.hour(.twoDigits(amPM: .omitted)))
-                                .font(.system(size: 10))
+                                .font(.system(size: 11))
                                 .foregroundStyle(.secondary)
                         }
                     }
@@ -99,11 +119,14 @@ struct SleepChartView: View {
         .chartYAxis {
             if showsAxes {
                 AxisMarks(position: .leading, values: [0, 1, 2, 3]) { value in
+                    AxisGridLine()
+                        .foregroundStyle(Color.primary.opacity(0.08))
+
                     AxisValueLabel {
                         if let v = value.as(Double.self),
                            let stage = SleepStage.allCases.first(where: { $0.plotIndex == v }) {
                             Text(stage.label)
-                                .font(.system(size: 10))
+                                .font(.system(size: 13))
                                 .foregroundStyle(.secondary)
                         }
                     }
@@ -135,16 +158,14 @@ struct SleepChartView: View {
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(.primary)
 
-            Text("·")
-                .foregroundStyle(.tertiary)
+            Text("·").foregroundStyle(.tertiary)
 
             Text("\(timeText(entry.start))–\(timeText(entry.end))")
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
                 .monospacedDigit()
 
-            Text("·")
-                .foregroundStyle(.tertiary)
+            Text("·").foregroundStyle(.tertiary)
 
             Text(entry.end.timeIntervalSince(entry.start).shortHourMinuteText)
                 .font(.system(size: 12, weight: .medium))
