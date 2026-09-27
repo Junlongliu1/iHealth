@@ -9,11 +9,13 @@ private enum SettingsRoute: Hashable {
     case logs
     case about
     case profile
+    case shoes
 }
 
 struct SettingsView: View {
     @State private var appearanceStore = AppearanceStore.shared
     @State private var profile = AthleteProfileStore.shared
+    @State private var shoeStore = RunningShoeStore.shared
     @State private var path = NavigationPath()
 
     private var logLineCount: Int {
@@ -26,6 +28,7 @@ struct SettingsView: View {
                 GlassEffectContainer(spacing: DSLayout.cardSpacing) {
                     LazyVStack(spacing: DSLayout.cardSpacing) {
                         profileCard
+                        gearCard
                         appearanceCard
                         developerCard
                     }
@@ -46,6 +49,7 @@ struct SettingsView: View {
                 case .logs:    LogViewerView()
                 case .about:   AboutView()
                 case .profile: AthleteProfileView()
+                case .shoes:   RunningShoeListView()
                 }
             }
         }
@@ -88,6 +92,38 @@ struct SettingsView: View {
         }
         .buttonStyle(.plain)
         .cardGlass()
+    }
+
+    // MARK: - 装备（新增）
+
+    private var gearCard: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            SettingsCardHeader(
+                icon: "shoeprints.fill",
+                iconColor: .orange,
+                title: "装备"
+            )
+
+            Button { path.append(SettingsRoute.shoes) } label: {
+                SettingsRow(
+                    icon: "shoeprints.fill",
+                    tint: .orange,
+                    title: "跑鞋",
+                    detail: shoeDetailText
+                )
+            }
+            .buttonStyle(.plain)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .cardGlass()
+    }
+
+    private var shoeDetailText: String {
+        let activeCount = shoeStore.shoes.filter { !$0.isRetired }.count
+        if shoeStore.shoes.isEmpty {
+            return "未添加"
+        }
+        return "\(activeCount) 双在役"
     }
 
     // MARK: - 外观

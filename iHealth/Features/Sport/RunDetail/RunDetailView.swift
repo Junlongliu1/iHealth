@@ -25,11 +25,9 @@ struct RunDetailView: View {
 
             ZStack(alignment: .top) {
 
-                // ① 底层背景
                 Color(.systemBackground)
                     .ignoresSafeArea()
 
-                // ② 地图层
                 RunHeroMapView(
                     route: detail?.route ?? [],
                     kilometerMarkers: detail?.kilometerMarkers ?? [],
@@ -44,7 +42,6 @@ struct RunDetailView: View {
                 )
                 .ignoresSafeArea(edges: .top)
 
-                // ③ 内容层
                 ScrollView {
                     VStack(spacing: 0) {
                         Color.clear
@@ -61,7 +58,6 @@ struct RunDetailView: View {
                     scrollOffset = newValue
                 }
 
-                // ④ 顶部工具栏
                 RunTopBar(
                     onBack: { dismiss() },
                     onShare: { shareRoute() },
@@ -139,6 +135,8 @@ struct RunDetailView: View {
         let s = detail?.series ?? RunSeries()
 
         return VStack(spacing: 14) {
+            ShoeAssignmentCard(workout: workout)
+
             if let vo2 = detail?.vo2Max {
                 VO2MaxCard(info: vo2)
             }
@@ -259,6 +257,179 @@ struct RunDetailView: View {
     }
 }
 
+// MARK: - 跑鞋关联卡片
+
+struct ShoeAssignmentCard: View {
+    let workout: Workout
+
+    @State private var store = RunningShoeStore.shared
+    @State private var showPicker = false
+
+    private var assignedShoe: RunningShoe? {
+        store.shoe(for: workout)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 6) {
+                Image(systemName: "shoeprints.fill")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.orange)
+
+                Text("跑鞋")
+                    .font(.system(size: 12, weight: .semibold))
+                    .textCase(.uppercase)
+                    .tracking(0.5)
+                    .foregroundStyle(.secondary)
+
+                Spacer()
+
+                if assignedShoe != nil {
+                    Button {
+                        showPicker = true
+                    } label: {
+                        Text("更换")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(.orange)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, DSLayout.rowHorizontalPadding)
+            .padding(.top, 14)
+            .padding(.bottom, 12)
+
+            if let shoe = assignedShoe {
+                shoeRow(shoe)
+            } else {
+                assignButton
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .cardGlass()
+        .sheet(isPresented: $showPicker) {
+            ShoePickerSheet(workout: workout)
+        }
+    }
+
+    // MARK: 已关联
+
+    private func shoeRow(_ shoe: RunningShoe) -> some View {
+        let total = store.totalDistance(for: shoe, workouts: [workout])
+        let progress = store.wearProgress(for: shoe, workouts: [workout])
+        let wear = ShoeWearLevel.from(progress: progress)
+
+        return Button {
+            showPicker = true
+        } label: {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 12) {
+                    ZStack {
+                        Circle()
+                            .fill(shoe.color.opacity(0.15))
+                            .frame(width: 36, height: 36)
+                        Image(systemName: "shoeprints.fill")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(shoe.color)
+                    }
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: 6) {
+                            Text(shoe.displayName)
+                                .font(.system(size: 15, weight: .semibold))
+                                .foregroundStyle(.primary)
+                                .lineLimit(1)
+
+                            if store.isDefault(shoe) {
+                                Text("默认")
+                                    .font(.system(size: 9, weight: .bold))
+                                    .foregroundStyle(.white)
+                                    .padding(.horizontal, 5)
+                                    .padding(.vertical, 1)
+                                    .background(.orange, in: Capsule())
+                            }
+                        }
+
+                        Text("本次 \(formatKm(workout.distance))")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                            .monospacedDigit()
+                    }
+
+                    Spacer()
+
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.tertiary)
+                }
+
+                // 磨损进度条
+                VStack(alignment: .leading, spacing: 6) {
+                    GeometryReader { geo in
+                        ZStack(alignment: .leading) {
+                            Capsule().fill(Color.primary.opacity(0.08))
+                            Capsule()
+                                .fill(wear.color.gradient)
+                                .frame(width: max(geo.size.width * min(progress, 1), 4))
+                        }
+                    }
+                    .frame(height: 5)
+
+                    HStack {
+                        Text("累计 \(formatKm(total))")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                            .monospacedDigit()
+
+                        Spacer()
+
+                        Text(wear.label)
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(wear.color)
+                    }
+                }
+            }
+            .padding(.horizontal, DSLayout.rowHorizontalPadding)
+            .padding(.bottom, 14)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: 未关联
+
+    private var assignButton: some View {
+        Button {
+            showPicker = true
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: "plus.circle.fill")
+                    .font(.system(size: 20))
+                    .foregroundStyle(.orange)
+
+                Text("关联跑鞋")
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(.primary)
+
+                Spacer()
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(.horizontal, DSLayout.rowHorizontalPadding)
+            .padding(.bottom, 14)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func formatKm(_ meters: Double?) -> String {
+        guard let meters, meters > 0 else { return "—" }
+        return String(format: "%.2f km", meters / 1000)
+    }
+}
+
 // MARK: - 详情页通用格式化
 
 enum RunDetailFormat {
@@ -274,14 +445,12 @@ enum RunDetailFormat {
             : String(format: "%d:%02d", m, s)
     }
 
-    /// 标准配速："5'20\""
     static func pace(_ p: TimeInterval?) -> String {
         guard let p, p.isFinite, p > 0 else { return "--" }
         let total = Int(p.rounded())
         return String(format: "%d'%02d\"", total / 60, total % 60)
     }
 
-    /// 高精度配速："4'23.6\""
     static func pacePrecise(_ p: TimeInterval?) -> String {
         guard let p, p.isFinite, p > 0 else { return "--" }
         let minutes = Int(p) / 60
@@ -289,13 +458,11 @@ enum RunDetailFormat {
         return String(format: "%d'%04.1f\"", minutes, seconds)
     }
 
-    /// 标准简版配速（Y 轴用）
     static func paceShort(_ seconds: Double) -> String {
         let total = Int(seconds.rounded())
         return String(format: "%d'%02d\"", total / 60, total % 60)
     }
 
-    /// 高精度简版配速（Y 轴用）："4'23.6\""
     static func paceShortPrecise(_ seconds: Double) -> String {
         let minutes = Int(seconds) / 60
         let secs = seconds - Double(minutes) * 60
