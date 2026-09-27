@@ -69,14 +69,18 @@ struct RunTopBar: View {
     }
 }
 
-// MARK: - 卡片头部：大字距离 / 日期 / 来源 / 头像
+// MARK: - 卡片头部：大字距离 / 日期 / 真实设备 / 用户显示名称
 
 struct RunSummaryHeader: View {
     let detail: RunDetail?
     let workout: Workout
 
+    @State private var profile = AthleteProfileStore.shared
+
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
+
+            // 左侧：距离 / 日期 / 真实设备来源
             VStack(alignment: .leading, spacing: 8) {
                 HStack(alignment: .firstTextBaseline, spacing: 5) {
                     Text(bigDistanceValue)
@@ -104,6 +108,7 @@ struct RunSummaryHeader: View {
                         .foregroundStyle(.secondary)
                 }
 
+                // 真实设备名（HealthKit sourceRevision.source.name）
                 if let source = detail?.sourceName, !source.isEmpty {
                     HStack(spacing: 5) {
                         Image(systemName: sourceIcon(for: source))
@@ -112,45 +117,49 @@ struct RunSummaryHeader: View {
                         Text(source)
                             .font(.system(size: 13))
                             .foregroundStyle(.secondary)
+                            .lineLimit(1)
                     }
                 }
             }
 
             Spacer(minLength: 0)
 
+            // 右侧：用户显示名称（在「个人资料」里设置）
             VStack(spacing: 5) {
                 ZStack {
                     Circle()
-                        .fill(Color(red: 0.98, green: 0.75, blue: 0.4).opacity(0.35))
-                        .frame(width: 52, height: 52)
-                        .blur(radius: 6)
+                        .fill(
+                            LinearGradient(
+                                colors: [
+                                    Color(red: 0.98, green: 0.75, blue: 0.4),
+                                    Color(red: 0.85, green: 0.5, blue: 0.3)
+                                ],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
 
-                    Circle()
-                        .fill(LinearGradient(
-                            colors: [
-                                Color(red: 0.98, green: 0.75, blue: 0.4),
-                                Color(red: 0.85, green: 0.5, blue: 0.3)
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        ))
-
-                    Image(systemName: "person.fill")
-                        .font(.system(size: 19, weight: .medium))
+                    Text(profileInitial)
+                        .font(.system(size: 19, weight: .bold, design: .rounded))
                         .foregroundStyle(.white)
                 }
                 .frame(width: 46, height: 46)
                 .overlay(Circle().stroke(.white, lineWidth: 2))
                 .shadow(color: .black.opacity(0.10), radius: 6, y: 2)
 
-                Text("Evron")
+                Text(displayName)
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                    .frame(maxWidth: 60)
             }
         }
         .padding(.horizontal, 20)
         .padding(.top, 14)
     }
+
+    // MARK: - 派生
 
     private var bigDistanceValue: String {
         guard let distance = detail?.distance, distance > 0 else { return "--" }
@@ -172,6 +181,19 @@ struct RunSummaryHeader: View {
 
     private func sourceIcon(for name: String) -> String {
         name.localizedCaseInsensitiveContains("watch") ? "applewatch" : "iphone"
+    }
+
+    /// 用户显示名称；未设置时回退到「我」
+    private var displayName: String {
+        let trimmed = profile.displayName
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "我" : trimmed
+    }
+
+    /// 头像首字母
+    private var profileInitial: String {
+        guard let first = displayName.first else { return "我" }
+        return String(first).uppercased()
     }
 }
 

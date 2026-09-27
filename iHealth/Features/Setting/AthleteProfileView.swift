@@ -43,6 +43,28 @@ struct AthleteProfileView: View {
                 title: "基本信息"
             )
 
+            // ★ 显示名称
+            HStack {
+                Text("显示名称")
+                    .font(.system(size: 15))
+                    .foregroundStyle(.primary)
+
+                Spacer()
+
+                TextField("未设置", text: $profile.displayName)
+                    .multilineTextAlignment(.trailing)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .font(.system(size: 15))
+                    .frame(maxWidth: 160)
+                    .submitLabel(.done)
+            }
+            .padding(.horizontal, DSLayout.rowHorizontalPadding)
+            .padding(.vertical, DSLayout.rowVerticalPadding)
+
+            SettingsRowDivider()
+
+            // 年龄（保持原样）
             Stepper(value: $profile.age, in: 10...90) {
                 HStack {
                     Text("年龄")
@@ -58,14 +80,13 @@ struct AthleteProfileView: View {
                 }
             }
             .padding(.horizontal, DSLayout.rowHorizontalPadding)
-            .padding(.bottom, 12)
+            .padding(.vertical, DSLayout.rowVerticalPadding)
 
-            footerText("用于估算最大心率（220 − 年龄）")
+            footerText("显示名称用于跑步详情、分享图片等处展示；留空则显示「我」。年龄用于估算最大心率（220 − 年龄）。")
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .cardGlass()
     }
-
     // MARK: - 最大心率
 
     private var maxHRCard: some View {

@@ -10,6 +10,11 @@ import Observation
 @Observable
 final class AthleteProfileStore {
     static let shared = AthleteProfileStore()
+    
+    /// 用户设置的显示名称；空字符串 → UI 回退到「我」
+    var displayName: String {
+        didSet { save() }
+    }
 
     var age: Int {
         didSet { save() }
@@ -35,6 +40,7 @@ final class AthleteProfileStore {
 
     private init() {
         let defaults = UserDefaults.standard
+        self.displayName = defaults.string(forKey: Keys.displayName) ?? ""
         self.age = defaults.object(forKey: Keys.age) as? Int ?? 30
 
         let maxHRStored = defaults.object(forKey: Keys.maxHR) as? Int
@@ -114,6 +120,7 @@ final class AthleteProfileStore {
 
     private func save() {
         let defaults = UserDefaults.standard
+        defaults.set(displayName, forKey: Keys.displayName)
         defaults.set(age, forKey: Keys.age)
 
         if let hr = customMaxHR {
@@ -136,6 +143,7 @@ final class AthleteProfileStore {
     }
 
     private enum Keys {
+        static let displayName = "athlete.displayName"
         static let age        = "athlete.age"
         static let maxHR      = "athlete.maxHR"
         static let thresholds = "athlete.thresholds"
