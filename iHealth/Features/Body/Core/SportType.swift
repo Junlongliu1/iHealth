@@ -1,7 +1,15 @@
-//
 //  SportType.swift
 //  iHealth
 //
+//  职责：运动类型枚举及其元数据。
+//
+//  · displayName / icon         —— UI 展示用
+//  · defaultThresholdFraction   —— 默认阈值心率占比
+//  · tssWeight                  —— 跨运动生理负荷权重
+//  · from(workout:)             —— 从 HKWorkout 推断运动类型
+//
+//  是"运动"这一概念的唯一定义源，
+//  卡片展示、TSS 计算、建议引擎都引用它。
 
 import Foundation
 import HealthKit

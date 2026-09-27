@@ -1,7 +1,14 @@
-//
 //  SportAdvice.swift
 //  iHealth
 //
+//  职责：运动建议生成引擎（纯函数，无状态）。
+//
+//  · level(for:)            —— 由 readiness / tsb 判定强度等级
+//                              （rest / easy / moderate / hard）
+//  · advice(for:snapshot:)  —— 组合"运动类型 + 强度等级"
+//                              输出建议文案（SportAdvice）
+//
+//  输出纯数据，渲染交给 SportAdviceCard。
 
 import SwiftUI
 

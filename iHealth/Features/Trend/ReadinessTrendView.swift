@@ -1,7 +1,14 @@
-//
 //  ReadinessTrendView.swift
 //  iHealth
 //
+//  职责：趋势页（依赖 Charts 框架）。
+//
+//  · 7 / 30 / 60 天范围切换
+//  · 三张图表：准备度与恢复度 / 分项评分 /
+//              训练负荷（CTL · ATL · TSB）
+//  · 点击图表显示当日数值（chartXSelection）
+//
+//  数据源：BodyMetricsStore.allSnapshots。
 
 import SwiftUI
 import Charts

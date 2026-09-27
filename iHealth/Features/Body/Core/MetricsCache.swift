@@ -1,8 +1,12 @@
-//
 //  MetricsCache.swift
 //  iHealth
 //
-
+//  职责：本地持久化层（JSON 文件）。
+//
+//  · daily_metrics.json —— 每日指标数组（读同步 / 写异步）
+//  · sync_meta.json      —— 上次同步时间戳，用于增量拉取
+//
+//  只被 BodyMetricsStore 调用，UI 层不直接引用。
 import Foundation
 
 /// 每日指标的本地缓存，使用 JSON 文件持久化。

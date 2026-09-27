@@ -1,7 +1,16 @@
-//
 //  MetricExplainer.swift
 //  iHealth
 //
+//  职责：指标说明数据源 + 通用说明页。
+//
+//  · MetricExplanation     —— 说明页数据模型
+//                             （标题 / 副标题 / 图标 / 分节）
+//  · MetricLibrary         —— 所有指标的说明文案
+//                             （准备度 / 恢复度 / HRV / RHR /
+//                              睡眠 / TSB / CTL / ATL / 分项）
+//  · MetricExplanationView —— 通用说明页渲染
+//
+//  卡片上的 ⓘ 弹出的是这个页面。
 
 import SwiftUI
 

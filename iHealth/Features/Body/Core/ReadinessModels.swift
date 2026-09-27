@@ -1,8 +1,18 @@
-//
 //  ReadinessModels.swift
 //  iHealth
 //
-
+//  职责：健康数据模型 + 计算引擎 + 全局 Store。
+//
+//  · DailyMetrics        —— 每天一条原始数据（HRV / RHR / 睡眠 / TSS），
+//                           是缓存的持久化单元。
+//  · ReadinessSnapshot   —— 由 DailyMetrics 计算出的当日快照，
+//                           包含 CTL / ATL / TSB / 各项评分 / 准备度，
+//                           是所有卡片和详情页的数据源。
+//  · ReadinessCalculator —— 纯函数计算引擎（无副作用、无状态）：
+//                           CTL / ATL 递推、各分项 0–100 映射、
+//                           一致性加成、快照序列生成。
+//  · BodyMetricsStore    —— @Observable 全局数据源，
+//                           负责 load / refresh / sync / 缓存合并。
 import Foundation
 import Observation
 

@@ -1,7 +1,17 @@
-//
-//  AppTheme.swift
+//  ThemeKit.swift
 //  iHealth
 //
+//  职责：全局视觉基础设施。
+//
+//  · EnvironmentValues 扩展 —— cardCornerRadius / cardPadding / cardSpacing
+//  · glassCard(...)          —— 玻璃卡片统一修饰符
+//  · cardReveal(...)         —— 卡片入场动画（淡入 + 上移 + 模糊消散）
+//  · accessibilityDecorative —— 装饰性元素 a11y 简写
+//  · PulsingHeartLoader      —— 加载动画（脉冲心跳 + 扩散波纹）
+//  · MetricRing              —— 0–100 分环形指示器（入场生长动画）
+//  · ContributionBar         —— 贡献度水平进度条
+//
+//  所有跨页面复用的视觉元素集中在此。
 
 import SwiftUI
 

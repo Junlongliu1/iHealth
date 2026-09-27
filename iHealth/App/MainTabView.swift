@@ -2,11 +2,18 @@
 //  MainTabView.swift
 //  iHealth
 //
+//  职责：App 的根 Tab 容器。
+//
+//  · 定义 AppTab 枚举（body / trend / health / sport / settings）
+//  · 每个 tab 各自包一个 NavigationStack，独立管理导航栈
+//  · 切换 tab 时刷新 activationID，触发内容级联重播
+//
 
 import SwiftUI
 
 enum AppTab: Hashable {
     case body
+    case trend
     case health
     case sport
     case settings
@@ -22,6 +29,12 @@ struct MainTabView: View {
             Tab("身体", systemImage: "figure.mind.and.body", value: AppTab.body) {
                 NavigationStack {
                     BodyTabView(activationID: activationID)
+                }
+            }
+
+            Tab("趋势", systemImage: "chart.xyaxis.line", value: AppTab.trend) {
+                NavigationStack {
+                    ReadinessTrendView()
                 }
             }
 

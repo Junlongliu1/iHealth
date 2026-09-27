@@ -1,7 +1,14 @@
-//
 //  TrainingLoadDetailView.swift
 //  iHealth
 //
+//  职责：训练负荷详情页（sheet）。
+//
+//  · 摘要卡：CTL / ATL / TSB 三个大数字
+//  · 三张计算卡：把 CTL / ATL 的递推公式
+//                 和当天的具体数值列出来
+//  · TSB 卡：计算关系 + 状态区间解读
+//
+//  入口：TrainingLoadCard 的「查看详情」。
 
 import SwiftUI
 

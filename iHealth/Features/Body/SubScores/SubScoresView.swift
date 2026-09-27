@@ -1,7 +1,13 @@
-//
 //  SubScoresView.swift
 //  iHealth
 //
+//  职责：分项评分详情页（sheet）。
+//
+//  · 摘要卡：大环显示恢复度 + 权重说明
+//  · 三张分项卡：HRV / 睡眠 / RHR 的分数、权重、细节
+//  · 贡献卡：三项对恢复度的贡献 + 一致性加成
+//
+//  入口：ReadinessCard / SubScoresCard 的「查看详情」。
 
 import SwiftUI
 
