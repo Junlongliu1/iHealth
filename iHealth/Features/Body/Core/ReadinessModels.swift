@@ -58,8 +58,6 @@ struct ReadinessSnapshot: Identifiable {
 enum ReadinessCalculator {
 
     static let sleepTargetHours: Double = 8.0
-    private static let coldStartCTL: Double = 40
-    private static let coldStartATL: Double = 40
 
     private static func clamp(_ v: Double, _ lo: Double = 0, _ hi: Double = 100) -> Double {
         min(max(v, lo), hi)
@@ -73,23 +71,67 @@ enum ReadinessCalculator {
         return (ctl, atl)
     }
 
+    // MARK: TSB 分（钟形曲线，峰值在 +10）
+
+    /// TSB = +10 时 100 分，两侧衰减；负侧衰减更快。
+    /// 这修正了原线性映射"越新鲜越好"的误导——TSB ≥ +20 通常意味着训练不足。
     static func tsbScore(tsb: Double) -> Double {
-        clamp(60 + tsb * 1.5)
+        let peak: Double = 10
+        if tsb >= peak {
+            return clamp(100 - (tsb - peak) * 0.8)
+        }
+        let m = peak - tsb  // > 0
+        switch m {
+        case ..<10:      return clamp(100 - m * 1.5)              // TSB 10 → 0 分区间
+        case 10..<20:    return clamp(85 - (m - 10) * 2.0)        // TSB 0 → -10
+        case 20..<30:    return clamp(65 - (m - 20) * 2.5)        // TSB -10 → -20
+        case 30..<40:    return clamp(40 - (m - 30) * 3.0)        // TSB -20 → -30
+        default:         return clamp(max(0, 10 - (m - 40) * 1.0))// TSB -30 以下
+        }
     }
 
-    // MARK: HRV
+    // MARK: HRV（对数变换）
 
-    static func hrvScore(trend: Double, baseline: Double) -> Double {
-        guard baseline > 0, trend > 0 else { return 70 }
-        let ratio = trend / baseline
-        return clamp(50 + 50 * tanh(3 * (ratio - 1)))
+    /// HRV 呈对数正态分布。使用 ln(trend) − ln(baseline) 的 z 值映射更稳健，
+    /// 避免"基线高的人对小幅下降过度敏感、基线低的人对同比例下降无感"。
+    static func hrvScore(
+        trend: Double,
+        baseline: Double,
+        baselineSD: Double? = nil
+    ) -> Double {
+        guard baseline > 0, trend > 0 else { return 50 }   // 无数据时返回中性，不虚高
+        let logRatio = log(trend) - log(baseline)
+        let sd = baselineSD ?? 0.15                        // ln(HRV) 的日常 SD 经验值
+        let z = logRatio / sd
+        return clamp(50 + 50 * tanh(z * 0.5))
     }
 
-    // MARK: RHR
+    /// ln 域的标准差，用于 HRV 打分。样本不足时返回 nil。
+    static func logSD(_ values: [Double]) -> Double? {
+        let filtered = values.filter { $0 > 0 }
+        guard filtered.count >= 5 else { return nil }
+        let logs = filtered.map { log($0) }
+        let meanLog = logs.reduce(0, +) / Double(logs.count)
+        let variance = logs.map { pow($0 - meanLog, 2) }.reduce(0, +) / Double(logs.count - 1)
+        let sd = sqrt(variance)
+        // 限制在生理合理范围，防止小样本导致的极端 z
+        return min(max(sd, 0.05), 0.30)
+    }
 
+    // MARK: RHR（非对称分段）
+
+    /// 中性区 ±3 bpm 得 75 分；降低时缓慢加分，升高时加速扣分。
+    /// 生理上 RHR 升高比降低更值得警惕。
     static func rhrScore(today: Double, baseline: Double) -> Double {
-        guard baseline > 0, today > 0 else { return 75 }
-        return clamp(75 - (today - baseline) * 8)
+        guard baseline > 0, today > 0 else { return 50 }
+        let delta = today - baseline
+        switch delta {
+        case ..<(-6):     return 100
+        case -6..<(-3):   return 100 - (delta + 6) * (25.0 / 3.0)   // -6 → 100, -3 → 75
+        case -3...3:      return 75
+        case 3..<6:       return 75 - (delta - 3) * (25.0 / 3.0)    // 3 → 75, 6 → 50
+        default:          return max(0, 50 - (delta - 6) * 8)       // 6 → 50, 10 → 18
+        }
     }
 
     // MARK: 睡眠
@@ -103,16 +145,26 @@ enum ReadinessCalculator {
     ) -> Double {
         guard hours > 0 else { return 0 }
 
-        let durationScore = clamp(100 - abs(hours - sleepTargetHours) * 20)
+        // 时长分：非对称 V 型（睡少扣得快，睡多扣得慢）
+        let delta = hours - sleepTargetHours
+        let durationScore: Double
+        if delta >= 0 {
+            durationScore = clamp(100 - delta * 12)   // 睡多：12 分/小时
+        } else {
+            durationScore = clamp(100 + delta * 20)   // 睡少：20 分/小时
+        }
 
+        // 质量分：深睡 1.0 / REM 0.9 / 浅睡 0.3
+        // 典型构成 18% / 22% / 60% → 0.552 为满分基准
         var qualityScore = durationScore
         let stageTotal = deep + rem + light
         if stageTotal > 0 {
-            let unitValue = (deep * 1.0 + rem * 0.8 + light * 0.3) / stageTotal
-            qualityScore = clamp(unitValue / 0.54 * 100)
+            let unitValue = (deep * 1.0 + rem * 0.9 + light * 0.3) / stageTotal
+            qualityScore = clamp(unitValue / 0.552 * 100)
         }
 
-        let efficiencyScore = clamp((efficiency - 60) * (100.0 / 40.0))
+        // 效率分：85% 为中性(60 分)，95% 满分
+        let efficiencyScore = clamp(60 + (efficiency - 85) * 4)
 
         return clamp(durationScore * 0.4 + qualityScore * 0.4 + efficiencyScore * 0.2)
     }
@@ -144,8 +196,13 @@ enum ReadinessCalculator {
 
         var results: [ReadinessSnapshot] = []
         results.reserveCapacity(sorted.count)
-        var ctl = coldStartCTL
-        var atl = coldStartATL
+
+        // 冷启动：用前 7 天 TSS 均值作为初始 CTL/ATL，下限 10
+        let warmupCount = min(7, sorted.count)
+        let warmupTSS = sorted.prefix(warmupCount).map(\.tss).reduce(0, +) / Double(warmupCount)
+        let coldStart = max(warmupTSS, 10)
+        var ctl = coldStart
+        var atl = coldStart
 
         for i in 0..<sorted.count {
             let day = sorted[i]
@@ -157,13 +214,14 @@ enum ReadinessCalculator {
             let hrvWindow28 = Array(sorted[max(0, i - 27)...i]).map { $0.hrv }
             let hrvTrend    = mean(hrvWindow7)
             let hrvBaseline = median(hrvWindow28)
+            let hrvSD       = logSD(hrvWindow28)
 
             let rhrWindow = Array(sorted[max(0, i - 13)...i]).map { $0.rhr }
             let rhrBaseline = median(rhrWindow)
 
             let tsb = ctl - atl
             let tsbS = tsbScore(tsb: tsb)
-            let hrvS = hrvScore(trend: hrvTrend, baseline: hrvBaseline)
+            let hrvS = hrvScore(trend: hrvTrend, baseline: hrvBaseline, baselineSD: hrvSD)
             let rhrS = rhrScore(today: day.rhr, baseline: rhrBaseline)
             let slpS = sleepScore(
                 hours: day.sleepHours,
@@ -203,19 +261,28 @@ enum ReadinessCalculator {
         snapshots(for: history).last
     }
 
-    // MARK: 一致性加成
+    // MARK: 一致性加成（连续函数版）
 
-    private static func applyConsistencyBonus(recovery: Double, hrvScore: Double, rhrScore: Double) -> Double {
-        if hrvScore < 40 && rhrScore < 40 {
-            return clamp(recovery * 0.90)
-        }
-        if hrvScore > 70 && rhrScore > 70 {
-            return clamp(recovery * 1.05)
-        }
-        if hrvScore < 35 && rhrScore > 65 {
-            return clamp(recovery * 0.95)
-        }
-        return recovery
+    /// 用连续 sigmoid 代替硬阈值，避免用户看到"39 分不扣、40 分扣"的跳变。
+    private static func applyConsistencyBonus(
+        recovery: Double,
+        hrvScore: Double,
+        rhrScore: Double
+    ) -> Double {
+        let minScore = min(hrvScore, rhrScore)
+        let maxScore = max(hrvScore, rhrScore)
+
+        // 双低惩罚：min 越低惩罚越强，最多 −10%
+        let lowFactor = 1.0 - max(0, 40 - minScore) / 40 * 0.10
+
+        // 双高奖励：min 越高奖励越强，最多 +5%
+        let highFactor = 1.0 + max(0, minScore - 70) / 30 * 0.05
+
+        // 解离惩罚：HRV 和 RHR 差异过大（>40）时轻微扣分，最多 −5%
+        let divergence = maxScore - minScore
+        let divergenceFactor = 1.0 - max(0, divergence - 40) / 60 * 0.05
+
+        return clamp(recovery * lowFactor * highFactor * divergenceFactor)
     }
 }
 

@@ -43,10 +43,12 @@ enum CardStyle {
     /// TSB 着色
     static func tsbColor(_ tsb: Double) -> Color {
         switch tsb {
-        case 10...:        return .green
-        case 0..<10:       return Color(red: 0.30, green: 0.75, blue: 0.50)
-        case -10..<0:      return .orange
-        case -30..<(-10):  return Color(red: 0.90, green: 0.45, blue: 0.20)
+        case 20...:        return .blue
+        case 5..<20:       return .green
+        case 0..<5:        return .mint
+        case -10..<0:      return .yellow
+        case -20..<(-10):  return .orange
+        case -30..<(-20):  return Color(red: 0.90, green: 0.45, blue: 0.20)
         default:           return .red
         }
     }

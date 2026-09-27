@@ -113,16 +113,17 @@ struct TrainingLoadDetailView: View {
     // MARK: - CTL
 
     private func ctlCard(_ s: ReadinessSnapshot) -> some View {
-        calcCard(
+        let prev = prevCTL
+        return calcCard(
             icon: "chart.line.uptrend.xyaxis",
             color: .teal,
             title: "体能基础 CTL",
             formula: "CTL今日 = CTL昨日 + (今日TSS − CTL昨日) ÷ 42",
             steps: [
-                ("昨日 CTL", String(format: "%.1f", prevCTL)),
+                ("昨日 CTL", prev.map { String(format: "%.1f", $0) } ?? "—"),
                 ("今日 TSS", String(format: "%.1f", todayTSS)),
-                ("差值", String(format: "%.1f", todayTSS - prevCTL)),
-                ("差值 ÷ 42", String(format: "%.2f", (todayTSS - prevCTL) / 42))
+                ("差值", prev.map { String(format: "%.1f", todayTSS - $0) } ?? "—"),
+                ("差值 ÷ 42", prev.map { String(format: "%.2f", (todayTSS - $0) / 42) } ?? "—")
             ],
             result: String(format: "%.1f", s.ctl),
             note: "以 42 天为窗口的指数加权移动平均，反映长期训练积累的体能基础。"
@@ -132,16 +133,17 @@ struct TrainingLoadDetailView: View {
     // MARK: - ATL
 
     private func atlCard(_ s: ReadinessSnapshot) -> some View {
-        calcCard(
+        let prev = prevATL
+        return calcCard(
             icon: "chart.line.flattrend.down",
             color: .orange,
             title: "训练负荷 ATL",
             formula: "ATL今日 = ATL昨日 + (今日TSS − ATL昨日) ÷ 7",
             steps: [
-                ("昨日 ATL", String(format: "%.1f", prevATL)),
+                ("昨日 ATL", prev.map { String(format: "%.1f", $0) } ?? "—"),
                 ("今日 TSS", String(format: "%.1f", todayTSS)),
-                ("差值", String(format: "%.1f", todayTSS - prevATL)),
-                ("差值 ÷ 7", String(format: "%.2f", (todayTSS - prevATL) / 7))
+                ("差值", prev.map { String(format: "%.1f", todayTSS - $0) } ?? "—"),
+                ("差值 ÷ 7", prev.map { String(format: "%.2f", (todayTSS - $0) / 7) } ?? "—")
             ],
             result: String(format: "%.1f", s.atl),
             note: "以 7 天为窗口的指数加权移动平均，反映近期训练带来的疲劳。"
@@ -259,26 +261,32 @@ struct TrainingLoadDetailView: View {
 
     // MARK: - 辅助
 
-    private var prevCTL: Double {
-        previousSnapshot?.ctl ?? 40.0
+    /// 昨日 CTL
+    private var prevCTL: Double? {
+        previousSnapshot?.ctl
     }
 
-    private var prevATL: Double {
-        previousSnapshot?.atl ?? 40.0
+    /// 昨日 ATL
+    private var prevATL: Double? {
+        previousSnapshot?.atl
     }
 
     private func tsbInterpretation(_ tsb: Double) -> String {
         switch tsb {
-        case 10...:
-            return "TSB ≥ +10：非常新鲜，可能训练不足。"
-        case 0..<10:
-            return "TSB 0 到 +10：新鲜，适合高质量训练。"
+        case 20...:
+            return "TSB ≥ +20：恢复好，可能训练不足。"
+        case 5..<20:
+            return "TSB +5 到 +20：理想竞技状态，适合高质量训练或比赛。"
+        case 0..<5:
+            return "TSB 0 到 +5：正常训练，正常训练区。"
         case -10..<0:
-            return "TSB −10 到 0：中性，正常训练区。"
-        case -30..<(-10):
-            return "TSB −10 到 −30：有目的的训练负荷区。"
+            return "TSB −10 到 0：轻度负荷，可继续按计划训练。"
+        case -20..<(-10):
+            return "TSB −20 到 −10：有目的的训练负荷区，注意恢复。"
+        case -30..<(-20):
+            return "TSB −30 到 −20：高负荷，建议减量或安排恢复。"
         default:
-            return "TSB < −30：过度负荷，需要恢复。"
+            return "TSB < −30：过度负荷，需要立即恢复。"
         }
     }
 }

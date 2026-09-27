@@ -301,7 +301,18 @@ extension HealthKitManager {
             }
             baseTSS = trimp / referenceTRIMP * 100
         } else {
-            baseTSS = hours * 50
+            // 无心率样本时按运动类型的经验强度估算（TSS/小时）
+            let fallbackIntensity: Double
+            switch sport {
+            case .running:        fallbackIntensity = 65
+            case .walking:        fallbackIntensity = 30
+            case .cycling:        fallbackIntensity = 55
+            case .hiking:         fallbackIntensity = 45
+            case .mountaineering: fallbackIntensity = 55
+            case .badminton:      fallbackIntensity = 65
+            case .other:          fallbackIntensity = 50
+            }
+            baseTSS = hours * fallbackIntensity
         }
 
         var tss = baseTSS * sport.tssWeight

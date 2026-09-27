@@ -62,14 +62,18 @@ enum SportType: String, Codable, CaseIterable, Identifiable {
         }
     }
 
-    /// 跨运动生理负荷权重（以骑行为基准 1.0）
+    /// 跨运动生理负荷权重（以阈值强度 1 小时 = 100 TSS 为基准）
+    ///
+    /// 修正说明：原以骑行为 1.0、跑步 1.5，会让所有跑者的 CTL 无端虚高 50%，
+    /// TSB 常年为负。标准 TSS 定义下，任何运动的"1 小时阈值"都等于 100 TSS。
+    /// 所以跑步和骑行都应为 1.0，差异体现在默认阈值比例上。
     var tssWeight: Double {
         switch self {
-        case .running:        return 1.5
-        case .walking:        return 0.8
-        case .badminton:      return 1.2
-        case .hiking:         return 1.2
-        case .mountaineering: return 1.4
+        case .running:        return 1.0
+        case .walking:        return 0.5
+        case .badminton:      return 1.0
+        case .hiking:         return 0.8
+        case .mountaineering: return 1.0
         case .cycling:        return 1.0
         case .other:          return 1.0
         }
