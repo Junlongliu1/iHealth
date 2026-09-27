@@ -161,9 +161,9 @@ struct RunDetailView: View {
                     color: .orange,
                     unit: "min/km",
                     points: s.pace,
-                    statLabel: "平均 \(RunDetailFormat.pace(pace))",
+                    statLabel: "平均 \(RunDetailFormat.pacePrecise(pace))",
                     averageValue: pace,
-                    yFormat: { RunDetailFormat.paceShort($0) }
+                    yFormat: { RunDetailFormat.paceShortPrecise($0) }
                 )
             }
 
@@ -174,9 +174,9 @@ struct RunDetailView: View {
                     color: .green,
                     unit: "cm",
                     points: s.strideLength,
-                    statLabel: "平均 \(Int(stride * 100))",
+                    statLabel: "平均 \(String(format: "%.2f", stride * 100))",
                     averageValue: stride,
-                    yFormat: { String(Int($0 * 100)) }
+                    yFormat: { String(format: "%.1f", $0 * 100) }
                 )
             }
 
@@ -187,9 +187,9 @@ struct RunDetailView: View {
                     color: .blue,
                     unit: "步/分",
                     points: s.cadence,
-                    statLabel: "平均 \(RunDetailFormat.cadence(cadence))",
+                    statLabel: "平均 \(String(format: "%.1f", cadence))",
                     averageValue: cadence,
-                    yFormat: { "\(Int($0.rounded()))" }
+                    yFormat: { String(format: "%.1f", $0) }
                 )
             }
 
@@ -202,9 +202,9 @@ struct RunDetailView: View {
                     color: .purple,
                     unit: "ms",
                     points: s.groundContactTime,
-                    statLabel: "平均 \(RunDetailFormat.int(avg))",
+                    statLabel: "平均 \(String(format: "%.1f", avg))",
                     averageValue: avg,
-                    yFormat: { "\(Int($0))" }
+                    yFormat: { String(format: "%.1f", $0) }
                 )
             }
 
@@ -215,9 +215,9 @@ struct RunDetailView: View {
                     color: .cyan,
                     unit: "cm",
                     points: s.verticalOscillation,
-                    statLabel: "平均 \(String(format: "%.1f", vo))",
+                    statLabel: "平均 \(String(format: "%.2f", vo))",
                     averageValue: vo,
-                    yFormat: { String(format: "%.1f", $0) }
+                    yFormat: { String(format: "%.2f", $0) }
                 )
             }
 
@@ -228,9 +228,9 @@ struct RunDetailView: View {
                     color: .pink,
                     unit: "W",
                     points: s.power,
-                    statLabel: "平均 \(String(format: "%.1f", power))",
+                    statLabel: "平均 \(String(format: "%.2f", power))",
                     averageValue: power,
-                    yFormat: { "\(Int($0))" }
+                    yFormat: { String(format: "%.1f", $0) }
                 )
             }
 
@@ -245,10 +245,10 @@ struct RunDetailView: View {
                     color: .orange,
                     unit: "m",
                     points: s.elevation,
-                    statLabel: "最大 \(Int(maxV)) 最小 \(Int(minV))",
-                    secondStatLabel: "↑\(RunDetailFormat.int(elev))m",
+                    statLabel: "最大 \(String(format: "%.1f", maxV)) 最小 \(String(format: "%.1f", minV))",
+                    secondStatLabel: "↑\(String(format: "%.1f", elev))m",
                     averageValue: avgV,
-                    yFormat: { "\(Int($0))" }
+                    yFormat: { String(format: "%.1f", $0) }
                 )
             }
         }
@@ -274,15 +274,32 @@ enum RunDetailFormat {
             : String(format: "%d:%02d", m, s)
     }
 
+    /// 标准配速："5'20\""
     static func pace(_ p: TimeInterval?) -> String {
         guard let p, p.isFinite, p > 0 else { return "--" }
         let total = Int(p.rounded())
         return String(format: "%d'%02d\"", total / 60, total % 60)
     }
 
+    /// 高精度配速："4'23.6\""
+    static func pacePrecise(_ p: TimeInterval?) -> String {
+        guard let p, p.isFinite, p > 0 else { return "--" }
+        let minutes = Int(p) / 60
+        let seconds = p - Double(minutes) * 60
+        return String(format: "%d'%04.1f\"", minutes, seconds)
+    }
+
+    /// 标准简版配速（Y 轴用）
     static func paceShort(_ seconds: Double) -> String {
         let total = Int(seconds.rounded())
         return String(format: "%d'%02d\"", total / 60, total % 60)
+    }
+
+    /// 高精度简版配速（Y 轴用）："4'23.6\""
+    static func paceShortPrecise(_ seconds: Double) -> String {
+        let minutes = Int(seconds) / 60
+        let secs = seconds - Double(minutes) * 60
+        return String(format: "%d'%04.1f\"", minutes, secs)
     }
 
     static func int(_ v: Double?) -> String {
