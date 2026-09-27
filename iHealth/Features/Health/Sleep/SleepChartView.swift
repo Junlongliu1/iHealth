@@ -153,8 +153,7 @@ struct SleepChartView: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 5)
-        .background(Capsule().fill(.regularMaterial))
-        .overlay(Capsule().stroke(Color.primary.opacity(0.08), lineWidth: 1))
+        .glassEffect(.regular, in: Capsule())
     }
 
     private func timeText(_ date: Date) -> String {

@@ -2,32 +2,26 @@
 //  CardStyle.swift
 //  iHealth
 //
-//  统一卡片外观：背景、圆角、描边。
+//  统一卡片外观：iOS 26+ 官方液态玻璃（Liquid Glass）。
 //
 
 import SwiftUI
 
 extension View {
+    /// 应用 iOS 26 官方液态玻璃卡片样式。
+    /// - Parameter radius: 圆角半径，默认 18。
     func cardStyle(radius: CGFloat = 18) -> some View {
-        modifier(CardStyleModifier(radius: radius))
+        glassEffect(
+            .regular,
+            in: RoundedRectangle(cornerRadius: radius, style: .continuous)
+        )
     }
-}
 
-private struct CardStyleModifier: ViewModifier {
-    @Environment(\.colorScheme) private var colorScheme
-    let radius: CGFloat
-
-    func body(content: Content) -> some View {
-        content
-            .background(
-                colorScheme == .dark
-                ? Color(red: 0.11, green: 0.11, blue: 0.12)
-                : Color(.secondarySystemBackground)
-            )
-            .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: radius, style: .continuous)
-                    .stroke(Color.primary.opacity(0.08), lineWidth: 1)
-            )
+    /// 可交互的液态玻璃（用于可点击的容器，例如 NavigationLink 内）。
+    func interactiveCardStyle(radius: CGFloat = 18) -> some View {
+        glassEffect(
+            .regular.interactive(),
+            in: RoundedRectangle(cornerRadius: radius, style: .continuous)
+        )
     }
 }
