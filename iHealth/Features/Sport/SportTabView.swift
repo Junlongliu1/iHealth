@@ -454,6 +454,7 @@ struct RunSummaryCard: View {
 
 // MARK: - Preview
 
+#if DEBUG
 #Preview("空数据") {
     NavigationStack {
         SportTabView(store: WorkoutStore.preview([]))
@@ -465,3 +466,5 @@ struct RunSummaryCard: View {
         SportTabView(store: WorkoutStore.preview(Workout.preview))
     }
 }
+
+#endif

@@ -3,22 +3,22 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BUILD="${BUILD_DIR:-$ROOT/build}"
-PROJECT="$ROOT/iMusic.xcodeproj"
+PROJECT="$ROOT/iHealth.xcodeproj"
 BUILD_VARIANT="${WALLET_BUILD_BUNDLE_VARIANT:-legacy}"
-APP_NAME="iMusic"
+APP_NAME="iHealth"
 MARKETING_VERSION="${WALLET_MARKETING_VERSION:-}"
 CURRENT_PROJECT_VERSION="${WALLET_BUILD_NUMBER:-}"
 DERIVED_DATA="$BUILD/DerivedData-iOS"
 STAGING="$BUILD/IPA"
 if [[ -n "$MARKETING_VERSION" ]]; then
-  IPA_PATH="$BUILD/iMusic-iOS-unsigned-${MARKETING_VERSION}.ipa"
+  IPA_PATH="$BUILD/iHealth-iOS-unsigned-${MARKETING_VERSION}.ipa"
 else
-  IPA_PATH="$BUILD/iMusic-iOS-unsigned.ipa"
+  IPA_PATH="$BUILD/iHealth-iOS-unsigned.ipa"
 fi
 
 # ✅ 新增：定义原始 Bundle ID 前缀，用于动态构建替换规则
-ORIGINAL_BUNDLE_PREFIX="com.evron.iMusic"
-LEGACY_BUNDLE_PREFIX="com.legacy.iMusic"
+ORIGINAL_BUNDLE_PREFIX="com.evron.iHealth"
+LEGACY_BUNDLE_PREFIX="com.legacy.iHealth"
 
 rm -rf "$DERIVED_DATA" "$STAGING"
 rm -f "$IPA_PATH"
@@ -61,7 +61,7 @@ fi
 # 4. 通过 BUILD_SETTINGS 数组注入 Bundle ID，无需修改任何项目文件
 xcodebuild build \
   -project "$PROJECT" \
-  -scheme "iMusic" \
+  -scheme "iHealth" \
   -configuration Release \
   -sdk iphoneos \
   -derivedDataPath "$DERIVED_DATA" \

@@ -275,6 +275,7 @@ struct RunMonthView: View {
 
 // MARK: - Preview
 
+#if DEBUG
 #Preview("年度 - 示例数据") {
     NavigationStack {
         RunYearView(store: WorkoutStore.preview(Workout.preview))
@@ -289,3 +290,5 @@ struct RunMonthView: View {
         )
     }
 }
+
+#endif
