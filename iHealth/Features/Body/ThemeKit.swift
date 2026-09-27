@@ -73,6 +73,58 @@ extension View {
     }
 }
 
+// MARK: - 加载动画
+
+/// 脉冲心跳 + 扩散波纹加载指示器
+struct PulsingHeartLoader: View {
+    var tint: Color = .red
+    var size: CGFloat = 68
+    var ringCount: Int = 3
+
+    @State private var animate = false
+
+    var body: some View {
+        ZStack {
+            // 扩散的波纹环
+            ForEach(0..<ringCount, id: \.self) { i in
+                Circle()
+                    .stroke(tint.opacity(0.28), lineWidth: 1.5)
+                    .frame(width: size, height: size)
+                    .scaleEffect(animate ? 2.2 : 0.8)
+                    .opacity(animate ? 0 : 1)
+                    .animation(
+                        .easeOut(duration: 2.0)
+                        .repeatForever(autoreverses: false)
+                        .delay(Double(i) * 2.0 / Double(ringCount)),
+                        value: animate
+                    )
+            }
+
+            // 底色圆
+            Circle()
+                .fill(tint.opacity(0.10))
+                .frame(width: size * 1.1, height: size * 1.1)
+                .overlay(
+                    Circle()
+                        .stroke(tint.opacity(0.15), lineWidth: 1)
+                )
+
+            // 心跳图标（symbolEffect 自带脉冲）
+            Image(systemName: "heart.fill")
+                .font(.system(size: size * 0.42, weight: .semibold))
+                .foregroundStyle(tint.gradient)
+                .symbolEffect(.pulse.byLayer)
+        }
+        .frame(width: size * 2.4, height: size * 2.4)
+        .onAppear {
+            // 触发波纹动画
+            DispatchQueue.main.async {
+                animate = true
+            }
+        }
+    }
+}
+
 // MARK: - 环形指标
 
 struct MetricRing: View {
@@ -82,8 +134,14 @@ struct MetricRing: View {
     var size: CGFloat = 72
     var fontSize: CGFloat = 24
 
+    @State private var appeared = false
+
     private var progress: Double {
         max(0.02, min(score / 100, 1))
+    }
+
+    private var displayedProgress: Double {
+        appeared ? progress : 0
     }
 
     var body: some View {
@@ -92,10 +150,10 @@ struct MetricRing: View {
                 .stroke(color.opacity(0.15), lineWidth: lineWidth)
 
             Circle()
-                .trim(from: 0, to: progress)
+                .trim(from: 0, to: displayedProgress)
                 .stroke(color, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
                 .rotationEffect(.degrees(-90))
-                .animation(.spring(response: 0.75, dampingFraction: 0.85), value: score)
+                .animation(.spring(response: 0.85, dampingFraction: 0.82), value: displayedProgress)
 
             Text("\(Int(score.rounded()))")
                 .font(.system(size: fontSize, weight: .bold, design: .rounded))
@@ -107,6 +165,12 @@ struct MetricRing: View {
                 .lineLimit(1)
         }
         .frame(width: size, height: size)
+        .onAppear {
+            // 让初始渲染先落在 0，再弹到目标值
+            DispatchQueue.main.async {
+                appeared = true
+            }
+        }
     }
 }
 

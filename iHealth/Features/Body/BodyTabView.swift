@@ -18,43 +18,65 @@ struct BodyTabView: View {
 
     @State private var revealed = false
 
+    /// 首屏加载中（保证至少 0.5 秒）
+    @State private var isInitialLoading = true
+    /// 下拉刷新中（叠加屏幕中间动画）
+    @State private var isRefreshing = false
+
     @Environment(\.cardCornerRadius) private var cardRadius
+
+    /// 中间加载动画的最短持续时间
+    private let minimumLoadingSeconds: TimeInterval = 0.5
 
     var body: some View {
         Group {
-            if store.isLoading {
+            if isInitialLoading {
                 loadingView
-                    .transition(.opacity)
+                    .transition(
+                        .asymmetric(
+                            insertion: .opacity,
+                            removal: .opacity.combined(with: .scale(scale: 1.04))
+                        )
+                    )
             } else if let error = store.loadError, store.history.isEmpty {
                 errorView(error)
-                    .transition(.opacity)
+                    .transition(.opacity.combined(with: .scale(scale: 0.96)))
             } else if let s = store.todaySnapshot {
                 content(s)
-                    .transition(.opacity)
+                    .transition(.opacity.combined(with: .scale(scale: 0.98)))
             } else {
                 emptyView
-                    .transition(.opacity)
+                    .transition(.opacity.combined(with: .scale(scale: 0.96)))
             }
         }
-        .animation(.smooth(duration: 0.35), value: store.isLoading)
+        .animation(.smooth(duration: 0.45), value: isInitialLoading)
+        .animation(.smooth(duration: 0.45), value: store.todaySnapshot?.date)
+        .animation(.smooth(duration: 0.45), value: store.loadError)
+        .animation(.spring(response: 0.42, dampingFraction: 0.82), value: isRefreshing)
+        .overlay {
+            if isRefreshing {
+                refreshOverlay
+                    .transition(
+                        .asymmetric(
+                            insertion: .opacity.combined(with: .scale(scale: 0.94)),
+                            removal:   .opacity.combined(with: .scale(scale: 1.06))
+                        )
+                    )
+            }
+        }
         .environment(\.cardCornerRadius, 16)
         .environment(\.cardPadding, 16)
         .environment(\.cardSpacing, 16)
         .navigationTitle("身体")
         .navigationBarTitleDisplayMode(.large)
-        .toolbar {
-            if store.isSyncing {
-                ToolbarItem(placement: .topBarTrailing) {
-                    ProgressView()
-                        .controlSize(.small)
-                        .transition(.opacity.combined(with: .scale))
-                }
-            }
-        }
-        .animation(.smooth(duration: 0.25), value: store.isSyncing)
         .task {
+            let start = Date()
             await store.load()
-            // 首次进入时播放一次
+            await ensureMinimumDuration(since: start)
+
+            withAnimation(.smooth(duration: 0.45)) {
+                isInitialLoading = false
+            }
             triggerReveal()
         }
         .onChange(of: activationID) { _, _ in
@@ -74,6 +96,16 @@ struct BodyTabView: View {
                 todayTSS: store.history.last?.tss ?? 0
             )
         }
+    }
+
+    // MARK: - 工具
+
+    /// 保证自 `start` 起至少经过 `minimumLoadingSeconds`，否则补足剩余时间。
+    private func ensureMinimumDuration(since start: Date) async {
+        let elapsed = Date().timeIntervalSince(start)
+        let remaining = minimumLoadingSeconds - elapsed
+        guard remaining > 0 else { return }
+        try? await Task.sleep(for: .seconds(remaining))
     }
 
     /// 重置 + 重播级联动画
@@ -120,7 +152,19 @@ struct BodyTabView: View {
         }
         .background(Color(.systemGroupedBackground))
         .refreshable {
+            let start = Date()
+
+            withAnimation(.spring(response: 0.42, dampingFraction: 0.82)) {
+                isRefreshing = true
+            }
+
             await store.refresh()
+            await ensureMinimumDuration(since: start)
+
+            withAnimation(.smooth(duration: 0.32)) {
+                isRefreshing = false
+            }
+
             // 刷新完再做一次轻微脉冲，强化"数据已更新"的反馈
             withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) {
                 revealed = false
@@ -661,31 +705,95 @@ struct BodyTabView: View {
 
     // MARK: - 状态页
 
+    /// 首屏加载：全屏居中脉冲心跳
     private var loadingView: some View {
-        VStack(spacing: 16) {
-            ProgressView()
-                .controlSize(.large)
-            Text("正在读取健康数据…")
+        VStack(spacing: 20) {
+            PulsingHeartLoader()
+
+            VStack(spacing: 6) {
+                Text("正在读取健康数据")
+                    .font(.headline)
+                    .foregroundStyle(.primary)
+
+                Text("这可能需要几秒钟")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color(.systemGroupedBackground))
+    }
+
+    /// 下拉刷新：磨砂遮罩 + 中央玻璃卡片
+    private var refreshOverlay: some View {
+        ZStack {
+            Rectangle()
+                .fill(.ultraThinMaterial)
+                .ignoresSafeArea()
+
+            VStack(spacing: 14) {
+                PulsingHeartLoader(size: 56)
+
+                VStack(spacing: 4) {
+                    Text("正在同步")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.primary)
+
+                    Text("更新最新健康数据")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(.horizontal, 32)
+            .padding(.vertical, 24)
+            .background(
+                .regularMaterial,
+                in: RoundedRectangle(cornerRadius: 26, style: .continuous)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 26, style: .continuous)
+                    .stroke(Color.primary.opacity(0.06), lineWidth: 0.5)
+            )
+            .shadow(color: .black.opacity(0.12), radius: 24, y: 10)
+        }
+    }
+
+    private func errorView(_ message: String) -> some View {
+        VStack(spacing: 14) {
+            Image(systemName: "heart.slash")
+                .font(.system(size: 44, weight: .semibold))
+                .foregroundStyle(.red.gradient)
+                .symbolEffect(.pulse.byLayer)
+
+            Text("无法读取数据")
+                .font(.headline)
+
+            Text(message)
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 40)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    private func errorView(_ message: String) -> some View {
-        ContentUnavailableView(
-            "无法读取数据",
-            systemImage: "heart.slash",
-            description: Text(message)
-        )
-    }
-
     private var emptyView: some View {
-        ContentUnavailableView(
-            "暂无数据",
-            systemImage: "waveform.path.ecg",
-            description: Text("请先在健康 App 中授权数据访问")
-        )
+        VStack(spacing: 14) {
+            Image(systemName: "waveform.path.ecg")
+                .font(.system(size: 44, weight: .semibold))
+                .foregroundStyle(.blue.gradient)
+                .symbolEffect(.variableColor.iterative)
+
+            Text("暂无数据")
+                .font(.headline)
+
+            Text("请先在健康 App 中授权数据访问")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 40)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     // MARK: - 状态色
