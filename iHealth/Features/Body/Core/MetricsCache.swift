@@ -78,6 +78,21 @@ nonisolated final class MetricsCache: @unchecked Sendable {
         try? FileManager.default.removeItem(at: fileURL)
         try? FileManager.default.removeItem(at: metaURL)
     }
+
+    // MARK: - 文件大小（新增）
+
+    /// 返回缓存文件大小（字节）：(每日指标文件, 同步时间戳文件)
+    nonisolated func fileSizes() -> (data: Int, meta: Int) {
+        (fileSize(at: fileURL), fileSize(at: metaURL))
+    }
+
+    private nonisolated func fileSize(at url: URL) -> Int {
+        guard let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
+              let number = attrs[.size] as? NSNumber else {
+            return 0
+        }
+        return number.intValue
+    }
 }
 
 // MARK: - 内部类型

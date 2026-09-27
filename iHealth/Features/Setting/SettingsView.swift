@@ -10,6 +10,7 @@ private enum SettingsRoute: Hashable {
     case about
     case profile
     case shoes
+    case cache
 }
 
 struct SettingsView: View {
@@ -50,6 +51,7 @@ struct SettingsView: View {
                 case .about:   AboutView()
                 case .profile: AthleteProfileView()
                 case .shoes:   RunningShoeListView()
+                case .cache:   CacheManagerView()
                 }
             }
         }
@@ -94,7 +96,7 @@ struct SettingsView: View {
         .cardGlass()
     }
 
-    // MARK: - 装备（新增）
+    // MARK: - 装备
 
     private var gearCard: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -176,6 +178,17 @@ struct SettingsView: View {
                     tint: .blue,
                     title: "调试日志",
                     detail: "\(logLineCount) 行"
+                )
+            }
+            .buttonStyle(.plain)
+
+            SettingsRowDivider()
+
+            Button { path.append(SettingsRoute.cache) } label: {
+                SettingsRow(
+                    icon: "internaldrive.fill",
+                    tint: .teal,
+                    title: "缓存管理"
                 )
             }
             .buttonStyle(.plain)
