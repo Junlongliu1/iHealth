@@ -10,7 +10,6 @@ import SwiftUI
 struct RunTopBar: View {
     let onBack: () -> Void
     let onShare: () -> Void
-    let onMore: () -> Void
     let namespace: Namespace.ID
 
     var body: some View {
@@ -32,36 +31,19 @@ struct RunTopBar: View {
 
             Spacer()
 
-            GlassEffectContainer(spacing: 0) {
-                HStack(spacing: 0) {
-                    Button {
-                        onShare()
-                    } label: {
-                        Image(systemName: "square.and.arrow.up")
-                            .font(.system(size: 16, weight: .medium))
-                            .foregroundStyle(.primary)
-                            .frame(width: 52, height: 44)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-
-                    Rectangle()
-                        .fill(Color.primary.opacity(0.15))
-                        .frame(width: 0.5, height: 22)
-
-                    Button {
-                        onMore()
-                    } label: {
-                        Image(systemName: "ellipsis")
-                            .font(.system(size: 16, weight: .medium))
-                            .foregroundStyle(.primary)
-                            .frame(width: 52, height: 44)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
+            GlassEffectContainer {
+                Button {
+                    onShare()
+                } label: {
+                    Image(systemName: "square.and.arrow.up")
+                        .font(.system(size: 16, weight: .medium))
+                        .foregroundStyle(.primary)
+                        .frame(width: 52, height: 44)
+                        .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
                 .glassEffect(.regular.interactive(), in: .capsule)
-                .glassEffectID("actions", in: namespace)
+                .glassEffectID("share", in: namespace)
             }
         }
         .padding(.horizontal, 16)

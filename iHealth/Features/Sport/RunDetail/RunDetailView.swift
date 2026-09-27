@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import UIKit
 
 struct RunDetailView: View {
     let workout: Workout
@@ -16,6 +17,8 @@ struct RunDetailView: View {
     @State private var detail: RunDetail?
     @State private var isLoading = true
     @State private var scrollOffset: CGFloat = 0
+
+    @State private var shareItem: ShareItem?
 
     var body: some View {
         GeometryReader { proxy in
@@ -60,8 +63,7 @@ struct RunDetailView: View {
 
                 RunTopBar(
                     onBack: { dismiss() },
-                    onShare: { shareRoute() },
-                    onMore: { /* TODO */ },
+                    onShare: { shareImage() },
                     namespace: glassNamespace
                 )
             }
@@ -70,6 +72,10 @@ struct RunDetailView: View {
         .task {
             detail = await WorkoutStore.loadRunDetail(for: workout)
             isLoading = false
+        }
+        .sheet(item: $shareItem) { item in
+            ActivityView(items: item.items)
+                .presentationDetents([.medium, .large])
         }
     }
 
@@ -252,8 +258,26 @@ struct RunDetailView: View {
         }
     }
 
-    private func shareRoute() {
-        // TODO: 分享路线
+    // MARK: - 分享
+
+    /// 渲染分享图片并弹出系统面板
+    @MainActor
+    private func shareImage() {
+        guard detail != nil else {
+            AppLogWarn("[RunDetail] 详情未加载，忽略分享")
+            return
+        }
+
+        let card = RunShareCard(detail: detail, workout: workout)
+        let renderer = ImageRenderer(content: card)
+        renderer.scale = 3
+        renderer.isOpaque = true
+
+        guard let image = renderer.uiImage else {
+            AppLogWarn("[RunDetail] 分享图片渲染失败")
+            return
+        }
+        shareItem = ShareItem(items: [image])
     }
 }
 
@@ -363,7 +387,6 @@ struct ShoeAssignmentCard: View {
                         .foregroundStyle(.tertiary)
                 }
 
-                // 磨损进度条
                 VStack(alignment: .leading, spacing: 6) {
                     GeometryReader { geo in
                         ZStack(alignment: .leading) {
