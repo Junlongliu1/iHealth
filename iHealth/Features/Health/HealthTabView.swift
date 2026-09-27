@@ -22,7 +22,8 @@ struct HealthTabView: View {
     @State private var todayHourlyBloodOxygen: [HourlyBloodOxygen] = []
     @State private var todayHourlyRestingHeartRate: [HourlyRestingHeartRate] = []
     @State private var todayHourlyHRV: [HourlyHeartRateVariability] = []
-    
+
+    @State private var hasLoadedOnce = false
     @State private var showEditor = false
 
     private let columns = [
@@ -33,21 +34,22 @@ struct HealthTabView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 20) {
-                if healthManager.isLoading {
-                    ProgressView("加载中...")
-                        .padding(.top, 40)
+                if hasLoadedOnce {
+                    loadedContent
+                        .transition(
+                            .asymmetric(
+                                insertion: .opacity.combined(with: .scale(scale: 0.97, anchor: .top)),
+                                removal: .opacity
+                            )
+                        )
                 } else {
-                    ringsCard
-
-                    LazyVGrid(columns: columns, spacing: 14) {
-                        ForEach(prefs.visibleCards) { kind in
-                            cardView(for: kind)
-                        }
-                    }
+                    HealthTabSkeleton(cardCount: max(prefs.visibleCards.count, 4))
+                        .transition(.opacity)
                 }
             }
             .padding(.horizontal, DSLayout.horizontalPadding)
             .padding(.bottom, 40)
+            .animation(.smooth(duration: 0.45), value: hasLoadedOnce)
         }
         .scrollEdgeEffectStyle(.soft, for: .top)
         .navigationTitle("健康")
@@ -69,19 +71,53 @@ struct HealthTabView: View {
         .sheet(isPresented: $showEditor) {
             HealthCardEditorView()
         }
-        .task {
-            await healthManager.requestAuthorization()
+        .task { await loadAll() }
+    }
 
-            // 每张卡片独立并行加载，加载完即显示，不必等全部完成
-            Task { todayVitals                 = await VitalsCalculator.shared.computeToday() }
-            Task { todayHourlySteps            = await healthManager.fetchTodayHourlySteps() }
-            Task { todayHourlyDaylight         = await healthManager.fetchTodayHourlyDaylight() }
-            Task { todayHourlyBasalEnergy      = await healthManager.fetchTodayHourlyBasalEnergy() }
-            Task { todayHourlyActiveEnergy     = await healthManager.fetchTodayHourlyActiveEnergy() }
-            Task { todayHourlyHeartRate        = await healthManager.fetchTodayHourlyHeartRate() }
-            Task { todayHourlyBloodOxygen      = await healthManager.fetchTodayHourlyBloodOxygen() }
-            Task { todayHourlyRestingHeartRate = await healthManager.fetchTodayHourlyRestingHeartRate() }
-            Task { todayHourlyHRV              = await healthManager.fetchTodayHourlyHeartRateVariability() }
+    // MARK: - 已加载内容
+
+    @ViewBuilder
+    private var loadedContent: some View {
+        ringsCard
+
+        LazyVGrid(columns: columns, spacing: 14) {
+            ForEach(prefs.visibleCards) { kind in
+                cardView(for: kind)
+            }
+        }
+    }
+
+    // MARK: - 数据加载（结构化并发：等所有数据就绪后一次性揭示）
+
+    private func loadAll() async {
+        await healthManager.requestAuthorization()
+
+        async let vitals  = VitalsCalculator.shared.computeToday()
+        async let steps   = healthManager.fetchTodayHourlySteps()
+        async let daylight = healthManager.fetchTodayHourlyDaylight()
+        async let basal   = healthManager.fetchTodayHourlyBasalEnergy()
+        async let active  = healthManager.fetchTodayHourlyActiveEnergy()
+        async let heart   = healthManager.fetchTodayHourlyHeartRate()
+        async let blood   = healthManager.fetchTodayHourlyBloodOxygen()
+        async let resting = healthManager.fetchTodayHourlyRestingHeartRate()
+        async let hrv     = healthManager.fetchTodayHourlyHeartRateVariability()
+
+        let (v, s, d, b, a, h, bo, r, hrvValue) = await (
+            vitals, steps, daylight, basal, active, heart, blood, resting, hrv
+        )
+
+        todayVitals                 = v
+        todayHourlySteps            = s
+        todayHourlyDaylight         = d
+        todayHourlyBasalEnergy      = b
+        todayHourlyActiveEnergy     = a
+        todayHourlyHeartRate        = h
+        todayHourlyBloodOxygen      = bo
+        todayHourlyRestingHeartRate = r
+        todayHourlyHRV              = hrvValue
+
+        withAnimation(.smooth(duration: 0.5)) {
+            hasLoadedOnce = true
         }
     }
 
@@ -126,65 +162,49 @@ struct HealthTabView: View {
             vitalsCard
 
         case .steps:
-            NavigationLink {
-                StepsDetailView()
-            } label: {
+            NavigationLink { StepsDetailView() } label: {
                 StepsCard(hourly: todayHourlySteps)
             }
             .buttonStyle(.plain)
 
         case .daylight:
-            NavigationLink {
-                DaylightDetailView()
-            } label: {
+            NavigationLink { DaylightDetailView() } label: {
                 DaylightCard(hourly: todayHourlyDaylight)
             }
             .buttonStyle(.plain)
 
         case .basalEnergy:
-            NavigationLink {
-                BasalEnergyDetailView()
-            } label: {
+            NavigationLink { BasalEnergyDetailView() } label: {
                 BasalEnergyCard(hourly: todayHourlyBasalEnergy)
             }
             .buttonStyle(.plain)
 
         case .activeEnergy:
-            NavigationLink {
-                ActiveEnergyDetailView()
-            } label: {
+            NavigationLink { ActiveEnergyDetailView() } label: {
                 ActiveEnergyCard(hourly: todayHourlyActiveEnergy)
             }
             .buttonStyle(.plain)
 
         case .heartRate:
-            NavigationLink {
-                HeartRateDetailView()
-            } label: {
+            NavigationLink { HeartRateDetailView() } label: {
                 HeartRateCard(hourly: todayHourlyHeartRate)
             }
             .buttonStyle(.plain)
 
         case .bloodOxygen:
-            NavigationLink {
-                BloodOxygenDetailView()
-            } label: {
+            NavigationLink { BloodOxygenDetailView() } label: {
                 BloodOxygenCard(hourly: todayHourlyBloodOxygen)
             }
             .buttonStyle(.plain)
 
         case .restingHeartRate:
-            NavigationLink {
-                RestingHeartRateDetailView()
-            } label: {
+            NavigationLink { RestingHeartRateDetailView() } label: {
                 RestingHeartRateCard(hourly: todayHourlyRestingHeartRate)
             }
             .buttonStyle(.plain)
 
         case .hrv:
-            NavigationLink {
-                HeartRateVariabilityDetailView()
-            } label: {
+            NavigationLink { HeartRateVariabilityDetailView() } label: {
                 HeartRateVariabilityCard(hourly: todayHourlyHRV)
             }
             .buttonStyle(.plain)
@@ -194,9 +214,7 @@ struct HealthTabView: View {
     // MARK: - 睡眠卡片
 
     private var sleepCard: some View {
-        NavigationLink {
-            SleepDetailView()
-        } label: {
+        NavigationLink { SleepDetailView() } label: {
             VStack(alignment: .leading, spacing: 10) {
                 cardHeader(
                     icon: "bed.double.fill",
@@ -221,6 +239,7 @@ struct HealthTabView: View {
                         .monospacedDigit()
                         .lineLimit(1)
                         .minimumScaleFactor(0.6)
+                        .contentTransition(.numericText())
 
                     SleepChartView(samples: healthManager.sleepSamples, showsAxes: false)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -243,9 +262,7 @@ struct HealthTabView: View {
             ? nil
             : SleepSummary(samples: healthManager.sleepSamples).total
 
-        return NavigationLink {
-            VitalsDetailView()
-        } label: {
+        return NavigationLink { VitalsDetailView() } label: {
             VStack(alignment: .leading, spacing: 10) {
                 cardHeader(
                     icon: "heart.text.square.fill",

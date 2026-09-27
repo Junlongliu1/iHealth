@@ -79,6 +79,7 @@ struct MetricCard<Hourly: Identifiable>: View {
                     .monospacedDigit()
                     .lineLimit(1)
                     .minimumScaleFactor(0.5)
+                    .contentTransition(.numericText())
 
                 Text(unit)
                     .font(.system(size: 11))

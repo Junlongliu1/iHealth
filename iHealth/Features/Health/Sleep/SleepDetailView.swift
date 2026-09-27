@@ -58,20 +58,25 @@ struct SleepDetailView: View {
                     onShift: shift(by:)
                 )
 
-                if isLoading && samples.isEmpty {
-                    ProgressView().padding(.top, 80).frame(maxWidth: .infinity)
-                } else if samples.isEmpty {
-                    ContentUnavailableView(
-                        "暂无睡眠数据",
-                        systemImage: "bed.double",
-                        description: Text("请确保已佩戴 Apple Watch 入睡")
-                    )
-                    .padding(.top, 40)
-                } else {
-                    content
-                        .id(contentId)
-                        .transition(.push(from: slideDirection))
+                Group {
+                    if isLoading && samples.isEmpty {
+                        MetricDetailSkeleton()
+                            .transition(.opacity)
+                    } else if samples.isEmpty {
+                        ContentUnavailableView(
+                            "暂无睡眠数据",
+                            systemImage: "bed.double",
+                            description: Text("请确保已佩戴 Apple Watch 入睡")
+                        )
+                        .padding(.top, 40)
+                        .transition(.opacity)
+                    } else {
+                        content
+                            .id(contentId)
+                            .transition(.push(from: slideDirection))
+                    }
                 }
+                .animation(.smooth(duration: 0.32), value: isLoading)
             }
             .padding(.horizontal, DSLayout.horizontalPadding)
             .padding(.top, 8)

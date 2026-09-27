@@ -74,15 +74,17 @@ struct MetricDetailScreen<
                     onShift: shift(by:)
                 )
 
-                if isLoading && hourly.isEmpty && daily.isEmpty {
-                    ProgressView()
-                        .padding(.top, 80)
-                        .frame(maxWidth: .infinity)
-                } else {
-                    content
-                        .id(contentId)
-                        .transition(.push(from: slideDirection))
+                Group {
+                    if isLoading && hourly.isEmpty && daily.isEmpty {
+                        MetricDetailSkeleton()
+                            .transition(.opacity)
+                    } else {
+                        content
+                            .id(contentId)
+                            .transition(.push(from: slideDirection))
+                    }
                 }
+                .animation(.smooth(duration: 0.32), value: isLoading)
             }
             .padding(.horizontal, DSLayout.horizontalPadding)
             .padding(.top, 8)
@@ -169,8 +171,15 @@ struct MetricDetailScreen<
     // MARK: - 加载
 
     private func loadCurrent() async {
-        isLoading = true
-        defer { isLoading = false }
+        withAnimation(.smooth(duration: 0.2)) {
+            isLoading = true
+        }
+        defer {
+            withAnimation(.smooth(duration: 0.32)) {
+                isLoading = false
+            }
+        }
+
         switch selectedRange {
         case .day:
             hourly = await fetchHourly(currentDay)

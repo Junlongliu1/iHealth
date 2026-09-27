@@ -672,6 +672,7 @@ struct MetricDayCardLayout<Chart: View, Footer: View>: View {
                         .monospacedDigit()
                         .lineLimit(1)
                         .minimumScaleFactor(0.6)
+                        .contentTransition(.numericText())
 
                     Text(unit)
                         .font(.system(size: 13))
@@ -725,6 +726,7 @@ struct MetricTrendCardLayout<Chart: View, Footer: View>: View {
                         .monospacedDigit()
                         .lineLimit(1)
                         .minimumScaleFactor(0.6)
+                        .contentTransition(.numericText())
 
                     Text(unit)
                         .font(.system(size: 13))

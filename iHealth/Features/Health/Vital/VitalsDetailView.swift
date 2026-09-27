@@ -26,13 +26,18 @@ struct VitalsDetailView: View {
                 if let banner = jointBanner {
                     jointWarning(banner)
                 }
-
                 if isLoading && trends.isEmpty {
-                    ProgressView()
-                        .padding(.top, 60)
+                    VitalsSkeleton()
+                        .transition(.opacity)
                 } else {
                     ForEach(VitalKind.allCases) { kind in
                         metricCard(for: kind)
+                            .transition(
+                                .asymmetric(
+                                    insertion: .opacity.combined(with: .offset(y: 14)),
+                                    removal: .opacity
+                                )
+                            )
                     }
                 }
             }
@@ -43,6 +48,7 @@ struct VitalsDetailView: View {
         .navigationTitle("生命体征")
         .navigationBarTitleDisplayMode(.inline)
         .task { await loadTrends(for: currentDay) }
+        .animation(.smooth(duration: 0.4), value: isLoading)
     }
 
     // MARK: - 日期导航条
@@ -477,7 +483,9 @@ struct VitalsDetailView: View {
 
     private func loadTrends(for day: Date) async {
         let data = await VitalsCalculator.shared.dayData(for: day)
-        trends = data.samples
-        isLoading = false
+        withAnimation(.smooth(duration: 0.4)) {
+            trends = data.samples
+            isLoading = false
+        }
     }
 }
